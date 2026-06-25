@@ -12,16 +12,28 @@ a skill, a subagent, MCP, graphify, or an audited third-party workflow tool.
 
 ## Install
 
-**No Go, no jq, no runtime — just a prebuilt binary.**
+**One command. No Go, no jq, no runtime.**
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Agent-Hellboy/claude-cockpit/main/install.sh | bash
 ```
 
-This downloads the right binary for your OS/arch into `~/.claude/bin/cockpit`,
-clears the macOS quarantine bit, and self-registers `statusLine` + the `Stop`
-hook into `~/.claude/settings.json` (merging, never overwriting — your other
-settings and hooks are preserved; a timestamped backup is made).
+The installer detects your OS and CPU architecture, downloads the matching
+prebuilt release asset, installs it to `~/.claude/bin/cockpit`, clears the macOS
+quarantine bit, and self-registers `statusLine` + the `Stop` hook into
+`~/.claude/settings.json` (merging, never overwriting — your other settings and
+hooks are preserved; a timestamped backup is made).
+
+Supported prebuilt targets:
+
+- macOS: Apple Silicon (`darwin/arm64`) and Intel (`darwin/amd64`)
+- Linux: `linux/arm64` and `linux/amd64`
+
+Install a specific release:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Agent-Hellboy/claude-cockpit/main/install.sh | COCKPIT_VERSION=v0.1.0 bash
+```
 
 Then **restart Claude Code** (or run `/hooks`) so the Stop hook loads. The status
 bar appears immediately.

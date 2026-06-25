@@ -19,14 +19,16 @@ command -v tar  >/dev/null 2>&1 || die "tar is required."
 
 os="$(uname -s | tr '[:upper:]' '[:lower:]')"
 arch="$(uname -m)"
+raw_os="$os"
+raw_arch="$arch"
 case "$arch" in
   x86_64|amd64)  arch="amd64" ;;
   arm64|aarch64) arch="arm64" ;;
-  *) die "unsupported arch: $arch" ;;
+  *) die "unsupported arch: $raw_arch (supported: amd64, arm64)" ;;
 esac
 case "$os" in
   darwin|linux) ;;
-  *) die "unsupported OS: $os (binaries are built for darwin/linux)" ;;
+  *) die "unsupported OS: $raw_os (supported: darwin, linux)" ;;
 esac
 
 ver="${COCKPIT_VERSION:-latest}"
@@ -39,8 +41,10 @@ fi
 
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
+say "Detected platform: $raw_os/$raw_arch -> $os/$arch"
 say "Downloading $asset ($ver)"
-curl -fsSL "$url" -o "$tmp/c.tar.gz" || die "download failed: $url"
+curl -fsSL "$url" -o "$tmp/c.tar.gz" || die "download failed: $url
+If this is a new release, check that the matching asset exists on GitHub."
 tar -xzf "$tmp/c.tar.gz" -C "$tmp" || die "extract failed"
 [ -f "$tmp/cockpit" ] || die "archive did not contain the cockpit binary"
 
