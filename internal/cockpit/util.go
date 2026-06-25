@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 	"unicode/utf8"
 )
 
@@ -35,6 +36,21 @@ func ConfigDir() string {
 
 func hintFile() string   { return filepath.Join(ConfigDir(), ".model-hint") }
 func reportFile() string { return filepath.Join(ConfigDir(), ".session-report") }
+func debugFile() string  { return filepath.Join(ConfigDir(), ".cockpit-debug.log") }
+
+func debugLog(format string, args ...any) {
+	if os.Getenv("COCKPIT_DEBUG") != "1" {
+		return
+	}
+	msg := fmt.Sprintf("%s "+format+"\n", append([]any{time.Now().Format(time.RFC3339)}, args...)...)
+	_ = os.MkdirAll(ConfigDir(), 0o755)
+	f, err := os.OpenFile(debugFile(), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	_, _ = f.WriteString(msg)
+}
 
 // fmtTokens renders a token count compactly: 1500->1k, 156000->156k, 1000000->1.0M.
 func fmtTokens(n int64) string {

@@ -45,9 +45,9 @@ deletes transient state, and backs up `settings.json`.
 - **Row 3 (only when present):** the latest suggestion from the analyzer.
 
 **2. Session analyzer** (`cockpit analyze`, a `Stop` hook) — after each turn it
-gathers cheap signals (turn count, ~context size, tool histogram, repeated reads,
-search load, current model, available skills, whether a graphify graph exists,
-repo size) and asks a fast model (`haiku`) for the 1–3 highest-leverage
+gathers cheap signals (turn count, ~context size, tool/search usage, current
+model, available Claude Code extensions, graphify state, repo size) and asks a
+fast model (`haiku`) for the 1–3 highest-leverage
 optimizations *right now*. It is **advisory** — it never changes your session;
 you act on the suggestion (`/model`, Shift+Tab, `/graphify`, …).
 
@@ -60,6 +60,11 @@ Design notes:
 - **No-graph aware** — if there's no graphify graph and you're searching a lot, it
   offers to build one with a repo-size-scaled ETA instead of suggesting a query
   that can't run.
+- **Claude Code aware** — suggestions can point at `/context`, `/compact`,
+  built-in skills, subagents, MCP servers/resources, local plugins, graphify, and
+  other installed workflow tools. If it suggests a new third-party tool, it asks
+  you to audit it first because MCP servers and plugins can receive powerful
+  local or account access.
 - **Non-blocking** — the analysis runs in a fully detached background process, so
   your turn never waits on it. Results land in `~/.claude/.session-report` and
   the status bar.
@@ -76,6 +81,20 @@ The analyzer writes its top suggestion to `~/.claude/.model-hint` and the full
 list to `~/.claude/.session-report`. The status line reads `.model-hint` to show
 row 3. A `MODEL_HINT_GUARD` env var stops the background `claude -p` call from
 re-triggering the hook.
+
+Analyzer privacy/debug controls:
+
+- `COCKPIT_ANALYZE_DISABLE=1` disables the analyzer; the status line still works.
+- `COCKPIT_ANALYZE_PROMPTS=0` omits recent user prompt text from worker signals.
+- `COCKPIT_DEBUG=1` writes minimal diagnostics to `~/.claude/.cockpit-debug.log`.
+- `CLAUDE_CONFIG_DIR` changes the Claude config directory; `COCKPIT_VERSION`
+  pins the installer to a release tag.
+
+By default, the analyzer sends only a compact summary to the background
+`claude -p --model haiku` worker: counts, current model, tool/search signals,
+repo estimate, graphify state, available extension names, and up to eight recent
+user prompts. Obvious secret-like assignments in prompts are redacted before the
+worker file is written.
 
 ## Subcommands
 

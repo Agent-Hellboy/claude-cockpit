@@ -4,6 +4,8 @@
 //
 //	cockpit statusline   # statusLine command — renders the two-row bar
 //	cockpit analyze      # Stop hook — analyzes the session for token savings
+//	cockpit install      # register statusLine + Stop hook in settings.json
+//	cockpit uninstall    # remove cockpit settings and transient state
 //	cockpit worker FILE  # internal: detached background classifier (not for direct use)
 //	cockpit version      # print version
 package main
@@ -20,7 +22,7 @@ var version = "dev"
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: cockpit {statusline|analyze|version}")
+		fmt.Fprintln(os.Stderr, "usage: cockpit {statusline|analyze|install|uninstall|worker|version}")
 		os.Exit(2)
 	}
 	switch os.Args[1] {

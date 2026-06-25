@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // strip ANSI for readable assertions.
@@ -185,6 +186,77 @@ func TestSettingsMergePreservesAndDedups(t *testing.T) {
 	}
 }
 
+func TestQuoteShellPath(t *testing.T) {
+	got := quote("/Users/o'connor/Claude Tools/cockpit")
+	want := "'/Users/o'\\''connor/Claude Tools/cockpit'"
+	if got != want {
+		t.Fatalf("quote=%q want %q", got, want)
+	}
+}
+
+func TestSetStopHookReplacesOldCockpitPath(t *testing.T) {
+	m := map[string]any{
+		"hooks": map[string]any{
+			"Stop": []any{
+				map[string]any{"hooks": []any{
+					map[string]any{"type": "command", "command": quote("/old path/cockpit") + " analyze"},
+					map[string]any{"type": "command", "command": "/foreign/tool.sh"},
+				}},
+			},
+		},
+	}
+	setStopHook(m, quote("/new path/o'connor/cockpit")+" analyze")
+
+	stop := toList(m["hooks"].(map[string]any)["Stop"])
+	cmds := map[string]int{}
+	for _, g := range stop {
+		for _, h := range toList(g.(map[string]any)["hooks"]) {
+			cmds[h.(map[string]any)["command"].(string)]++
+		}
+	}
+	if cmds[quote("/old path/cockpit")+" analyze"] != 0 {
+		t.Fatalf("old cockpit hook was not removed: %v", cmds)
+	}
+	if cmds[quote("/new path/o'connor/cockpit")+" analyze"] != 1 {
+		t.Fatalf("new cockpit hook missing: %v", cmds)
+	}
+	if cmds["/foreign/tool.sh"] != 1 {
+		t.Fatalf("foreign hook not preserved: %v", cmds)
+	}
+}
+
+func TestMalformedStopHookReplaced(t *testing.T) {
+	m := map[string]any{"hooks": map[string]any{"Stop": map[string]any{"bad": true}}}
+	setStopHook(m, quote("/x/cockpit")+" analyze")
+	stop := toList(m["hooks"].(map[string]any)["Stop"])
+	if len(stop) != 1 {
+		t.Fatalf("want one hook group, got %#v", stop)
+	}
+}
+
+func TestTailEntriesBounded(t *testing.T) {
+	dir := t.TempDir()
+	tp := filepath.Join(dir, "t.jsonl")
+	var b strings.Builder
+	for i := 0; i < 5; i++ {
+		b.WriteString(`{"message":{"role":"user","content":"prompt ` + string(rune('0'+i)) + `"}}` + "\n")
+	}
+	if err := os.WriteFile(tp, []byte(b.String()), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got := tailEntries(tp, 2)
+	if len(got) != 2 {
+		t.Fatalf("want 2 entries, got %d", len(got))
+	}
+	var s string
+	if err := json.Unmarshal(got[0].Message.Content, &s); err != nil || s != "prompt 3" {
+		t.Fatalf("first tail entry=%q err=%v", s, err)
+	}
+	if err := json.Unmarshal(got[1].Message.Content, &s); err != nil || s != "prompt 4" {
+		t.Fatalf("second tail entry=%q err=%v", s, err)
+	}
+}
+
 func TestGatherSignalsAndCadence(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("CLAUDE_CONFIG_DIR", dir)
@@ -200,13 +272,34 @@ func TestGatherSignalsAndCadence(t *testing.T) {
 	b.WriteString(`{"message":{"role":"user","content":"rename this field"}}` + "\n")
 	tp := filepath.Join(dir, "t.jsonl")
 	os.WriteFile(tp, []byte(b.String()), 0o644)
+	os.WriteFile(filepath.Join(dir, ".mcp.json"), []byte(`{"mcpServers":{"github":{},"context7":{}}}`), 0o644)
+	os.MkdirAll(filepath.Join(dir, ".claude", "agents", "reviewer"), 0o755)
+	os.MkdirAll(filepath.Join(dir, ".claude", "skills", "superclaude", ".claude-plugin"), 0o755)
+	os.WriteFile(filepath.Join(dir, ".claude", "skills", "superclaude", ".claude-plugin", "plugin.json"), []byte(`{"name":"superclaude"}`), 0o644)
 
 	in := stopInput{TranscriptPath: tp, Cwd: dir, SessionID: "s"}
 	sig := gatherSignals(in, 30)
-	for _, want := range []string{"searches=5", "files_reread_3x+=1", "graphify_graph=no", "model=claude-opus-4-8", "Bash:5", "Read:3", "rename this field"} {
+	for _, want := range []string{
+		"searches=5", "files_reread_3x+=1", "graphify_graph=no", "model=claude-opus-4-8",
+		"Bash:5", "Read:3", "available_agents: reviewer", "available_mcp_servers: context7 github",
+		"available_plugins: superclaude", "rename this field",
+	} {
 		if !strings.Contains(sig, want) {
 			t.Errorf("signals missing %q:\n%s", want, sig)
 		}
+	}
+
+	b.WriteString(`{"message":{"role":"user","content":"api_key=abc123 password:secret"}}` + "\n")
+	os.WriteFile(tp, []byte(b.String()), 0o644)
+	sig = gatherSignals(in, 31)
+	if strings.Contains(sig, "abc123") || strings.Contains(sig, "password:secret") {
+		t.Fatalf("secret was not redacted:\n%s", sig)
+	}
+
+	t.Setenv("COCKPIT_ANALYZE_PROMPTS", "0")
+	sig = gatherSignals(in, 32)
+	if strings.Contains(sig, "rename this field") {
+		t.Fatalf("prompts should be omitted when disabled:\n%s", sig)
 	}
 
 	// cadence: counter is independent state per session id.
@@ -215,5 +308,32 @@ func TestGatherSignalsAndCadence(t *testing.T) {
 	}
 	if got := bumpCounter("c1"); got != 2 {
 		t.Errorf("second bump=%d want 2", got)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".sa-count-c1")); !os.IsNotExist(err) {
+		t.Fatalf("raw session id should not be used as filename")
+	}
+	if matches, _ := filepath.Glob(filepath.Join(dir, ".sa-count-*")); len(matches) != 1 {
+		t.Fatalf("want one hashed counter file, got %v", matches)
+	}
+}
+
+func TestReadHintBoundedAndStale(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", dir)
+
+	huge := strings.Repeat("x", maxHintBytes+100)
+	if err := os.WriteFile(hintFile(), []byte(huge), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := readHint(); len(got) != maxHintBytes {
+		t.Fatalf("hint length=%d want %d", len(got), maxHintBytes)
+	}
+
+	stale := time.Now().Add(-hintMaxAge - time.Minute)
+	if err := os.Chtimes(hintFile(), stale, stale); err != nil {
+		t.Fatal(err)
+	}
+	if got := readHint(); got != "" {
+		t.Fatalf("stale hint should be ignored, got %q", got)
 	}
 }

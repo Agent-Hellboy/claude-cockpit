@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -60,7 +61,7 @@ func Uninstall() error {
 		_ = backup(settingsPath)
 
 		if sl, ok := m["statusLine"].(map[string]any); ok {
-			if cmd, _ := sl["command"].(string); cmd == slCmd {
+			if cmd, _ := sl["command"].(string); cmd == slCmd || isCockpitSubcommand(cmd, "statusline") {
 				delete(m, "statusLine")
 			}
 		}
@@ -138,7 +139,7 @@ func setStopHook(m map[string]any, cmd string) {
 		hooks = map[string]any{}
 	}
 	stop := toList(hooks["Stop"])
-	stop = filterOutCommand(stop, cmd)
+	stop = filterOutCockpitCommand(stop, cmd, "analyze")
 	stop = append(stop, map[string]any{
 		"hooks": []any{map[string]any{"type": "command", "command": cmd}},
 	})
@@ -151,7 +152,7 @@ func removeStopHook(m map[string]any, cmd string) {
 	if hooks == nil {
 		return
 	}
-	stop := filterOutCommand(toList(hooks["Stop"]), cmd)
+	stop := filterOutCockpitCommand(toList(hooks["Stop"]), cmd, "analyze")
 	if len(stop) == 0 {
 		delete(hooks, "Stop")
 	} else {
@@ -167,6 +168,10 @@ func removeStopHook(m map[string]any, cmd string) {
 // filterOutCommand drops hook groups that contain the given command, and any
 // group left with no inner hooks.
 func filterOutCommand(groups []any, cmd string) []any {
+	return filterOutCockpitCommand(groups, cmd, "")
+}
+
+func filterOutCockpitCommand(groups []any, cmd, subcommand string) []any {
 	out := make([]any, 0, len(groups))
 	for _, g := range groups {
 		gm, ok := g.(map[string]any)
@@ -178,7 +183,7 @@ func filterOutCommand(groups []any, cmd string) []any {
 		kept := make([]any, 0, len(inner))
 		for _, h := range inner {
 			if hm, ok := h.(map[string]any); ok {
-				if c, _ := hm["command"].(string); c == cmd {
+				if c, _ := hm["command"].(string); c == cmd || isCockpitSubcommand(c, subcommand) {
 					continue
 				}
 			}
@@ -193,6 +198,13 @@ func filterOutCommand(groups []any, cmd string) []any {
 	return out
 }
 
+func isCockpitSubcommand(cmd, subcommand string) bool {
+	if subcommand == "" {
+		return false
+	}
+	return strings.HasSuffix(cmd, " "+subcommand) && strings.Contains(cmd, "cockpit")
+}
+
 func toList(v any) []any {
 	if l, ok := v.([]any); ok {
 		return l
@@ -202,5 +214,5 @@ func toList(v any) []any {
 
 // quote single-quotes a path for safe use in a shell command string.
 func quote(s string) string {
-	return "'" + s + "'"
+	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
 }

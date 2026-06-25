@@ -8,6 +8,12 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
+)
+
+const (
+	maxHintBytes = 8 * 1024
+	hintMaxAge   = 24 * time.Hour
 )
 
 type slInput struct {
@@ -64,8 +70,17 @@ func RunStatusline(r io.Reader, w io.Writer) {
 }
 
 func readHint() string {
-	b, err := os.ReadFile(hintFile())
+	f, err := os.Open(hintFile())
 	if err != nil {
+		return ""
+	}
+	defer f.Close()
+	if st, err := f.Stat(); err == nil && time.Since(st.ModTime()) > hintMaxAge {
+		return ""
+	}
+	b, err := io.ReadAll(io.LimitReader(f, maxHintBytes))
+	if err != nil {
+		debugLog("statusline: read hint: %v", err)
 		return ""
 	}
 	return strings.TrimSpace(string(b))

@@ -1,6 +1,9 @@
 package cockpit
 
 import (
+	"bufio"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -45,6 +48,24 @@ type stopInput struct {
 }
 
 var searchRe = regexp.MustCompile(`\b(grep|rg|find)\b`)
+var secretRe = regexp.MustCompile(`(?i)(api[_-]?key|authorization|bearer|password|token|secret)\s*[:=]\s*['"]?[^'"\s]+`)
+
+type Signals struct {
+	Turns               int
+	Model               string
+	ApproxContextTokens int64
+	ToolHistogram       map[string]int
+	Searches            int
+	FilesReread3x       int
+	GraphifyGraph       bool
+	RepoSourceFiles     string
+	EstGraphBuild       string
+	AvailableSkills     string
+	AvailableAgents     string
+	AvailableMCPServers string
+	AvailablePlugins    string
+	RecentPrompts       []string
+}
 
 // RunAnalyze implements the Stop hook: gather cheap signals, throttle by an
 // auto-scaling cadence, and hand off to a detached worker that asks a cheap
@@ -53,12 +74,17 @@ func RunAnalyze(r io.Reader) {
 	if os.Getenv("MODEL_HINT_GUARD") != "" {
 		return // don't run inside the background `claude -p`
 	}
+	if os.Getenv("COCKPIT_ANALYZE_DISABLE") == "1" {
+		return
+	}
 	data, _ := io.ReadAll(r)
 	var in stopInput
 	if json.Unmarshal(data, &in) != nil || in.TranscriptPath == "" {
+		debugLog("analyze: invalid stop hook input")
 		return
 	}
 	if _, err := exec.LookPath("claude"); err != nil {
+		debugLog("analyze: claude not found: %v", err)
 		return
 	}
 
@@ -74,11 +100,15 @@ func RunAnalyze(r io.Reader) {
 		return
 	}
 
-	signals := gatherSignals(in, n)
+	signals := formatSignals(collectSignals(in, n))
 	spawnWorker(signals)
 }
 
 func gatherSignals(in stopInput, turns int) string {
+	return formatSignals(collectSignals(in, turns))
+}
+
+func collectSignals(in stopInput, turns int) Signals {
 	entries := tailEntries(in.TranscriptPath, 3000)
 
 	hist := map[string]int{}
@@ -136,11 +166,9 @@ func gatherSignals(in stopInput, turns int) string {
 		}
 	}
 
-	graph := "no"
 	files, est := "?", "n/a"
-	if fileExists(filepath.Join(in.Cwd, "graphify-out", "graph.json")) {
-		graph = "yes"
-	} else {
+	graph := hasGraphifyGraph(in.Cwd)
+	if !graph {
 		nf := countSourceFiles(in.Cwd)
 		files = strconv.Itoa(nf)
 		est = graphETA(nf)
@@ -149,30 +177,88 @@ func gatherSignals(in stopInput, turns int) string {
 	if len(prompts) > 8 {
 		prompts = prompts[len(prompts)-8:]
 	}
+	if os.Getenv("COCKPIT_ANALYZE_PROMPTS") == "0" {
+		prompts = nil
+	}
+	for i := range prompts {
+		prompts[i] = redactSecrets(prompts[i])
+	}
 
+	return Signals{
+		Turns:               turns,
+		Model:               fallback(lastModel, "?"),
+		ApproxContextTokens: ctxTokens,
+		ToolHistogram:       hist,
+		Searches:            greps,
+		FilesReread3x:       dups,
+		GraphifyGraph:       graph,
+		RepoSourceFiles:     files,
+		EstGraphBuild:       est,
+		AvailableSkills:     listSkills(in.Cwd),
+		AvailableAgents:     listAgents(in.Cwd),
+		AvailableMCPServers: listMCPServers(in.Cwd),
+		AvailablePlugins:    listPlugins(in.Cwd),
+		RecentPrompts:       prompts,
+	}
+}
+
+func formatSignals(s Signals) string {
+	graph := "no"
+	if s.GraphifyGraph {
+		graph = "yes"
+	}
 	return fmt.Sprintf(`turns=%d  model=%s  approx_context_tokens=%d
 tool_histogram: %s
 searches=%d  files_reread_3x+=%d
 graphify_graph=%s  repo_source_files=%s  est_graph_build=%s
 available_skills: %s
+available_agents: %s
+available_mcp_servers: %s
+available_plugins: %s
 recent_prompts: %s`,
-		turns, fallback(lastModel, "?"), ctxTokens,
-		histString(hist), greps, dups,
-		graph, files, est,
-		listSkills(in.Cwd), strings.Join(prompts, " "))
+		s.Turns, fallback(s.Model, "?"), s.ApproxContextTokens,
+		histString(s.ToolHistogram), s.Searches, s.FilesReread3x,
+		graph, s.RepoSourceFiles, s.EstGraphBuild,
+		s.AvailableSkills,
+		s.AvailableAgents,
+		s.AvailableMCPServers,
+		s.AvailablePlugins,
+		strings.Join(s.RecentPrompts, " "))
 }
 
 func tailEntries(path string, max int) []tEntry {
-	b, err := os.ReadFile(path)
+	if max <= 0 {
+		return nil
+	}
+	f, err := os.Open(path)
 	if err != nil {
 		return nil
 	}
-	lines := strings.Split(strings.TrimRight(string(b), "\n"), "\n")
-	if len(lines) > max {
-		lines = lines[len(lines)-max:]
+	defer f.Close()
+
+	lines := make([]string, max)
+	count := 0
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 64*1024), 4*1024*1024)
+	for sc.Scan() {
+		lines[count%max] = sc.Text()
+		count++
 	}
-	out := make([]tEntry, 0, len(lines))
-	for _, ln := range lines {
+	if err := sc.Err(); err != nil {
+		debugLog("tailEntries: scan %s: %v", path, err)
+		return nil
+	}
+	n := count
+	if n > max {
+		n = max
+	}
+	start := 0
+	if count > max {
+		start = count % max
+	}
+	out := make([]tEntry, 0, n)
+	for i := 0; i < n; i++ {
+		ln := lines[(start+i)%max]
 		if ln == "" {
 			continue
 		}
@@ -182,6 +268,24 @@ func tailEntries(path string, max int) []tEntry {
 		}
 	}
 	return out
+}
+
+func redactSecrets(s string) string {
+	return secretRe.ReplaceAllString(s, "$1=[redacted]")
+}
+
+func hasGraphifyGraph(cwd string) bool {
+	for _, marker := range []string{
+		filepath.Join("graphify-out", "graph.json"),
+		filepath.Join("graphify-out", "entities.jsonl"),
+		filepath.Join("graphify-out", "relationships.jsonl"),
+		filepath.Join(".graphify", "graph.json"),
+	} {
+		if fileExists(filepath.Join(cwd, marker)) {
+			return true
+		}
+	}
+	return false
 }
 
 func histString(h map[string]int) string {
@@ -246,12 +350,23 @@ func graphETA(files int) string {
 }
 
 func listSkills(cwd string) string {
-	set := map[string]bool{}
-	for _, d := range []string{
+	return listDirs([]string{
 		filepath.Join(cwd, ".codex", "skills"),
 		filepath.Join(cwd, ".claude", "skills"),
 		filepath.Join(ConfigDir(), "skills"),
-	} {
+	})
+}
+
+func listAgents(cwd string) string {
+	return listDirs([]string{
+		filepath.Join(cwd, ".claude", "agents"),
+		filepath.Join(ConfigDir(), "agents"),
+	})
+}
+
+func listDirs(dirs []string) string {
+	set := map[string]bool{}
+	for _, d := range dirs {
 		entries, err := os.ReadDir(d)
 		if err != nil {
 			continue
@@ -270,11 +385,80 @@ func listSkills(cwd string) string {
 	return strings.Join(names, " ")
 }
 
+func listMCPServers(cwd string) string {
+	type mcpConfig struct {
+		MCPServers map[string]any `json:"mcpServers"`
+	}
+	set := map[string]bool{}
+	for _, p := range []string{
+		filepath.Join(cwd, ".mcp.json"),
+		filepath.Join(ConfigDir(), "settings.json"),
+		homeClaudeJSON(),
+	} {
+		if p == "" {
+			continue
+		}
+		b, err := os.ReadFile(p)
+		if err != nil || len(b) > 512*1024 {
+			continue
+		}
+		var cfg mcpConfig
+		if json.Unmarshal(b, &cfg) != nil {
+			continue
+		}
+		for name := range cfg.MCPServers {
+			set[name] = true
+		}
+	}
+	return sortedSet(set)
+}
+
+func listPlugins(cwd string) string {
+	set := map[string]bool{}
+	for _, root := range []string{
+		filepath.Join(cwd, ".claude", "skills"),
+		filepath.Join(ConfigDir(), "skills"),
+		filepath.Join(cwd, ".claude", "plugins"),
+		filepath.Join(ConfigDir(), "plugins"),
+	} {
+		entries, err := os.ReadDir(root)
+		if err != nil {
+			continue
+		}
+		for _, e := range entries {
+			if !e.IsDir() {
+				continue
+			}
+			if fileExists(filepath.Join(root, e.Name(), ".claude-plugin", "plugin.json")) {
+				set[e.Name()] = true
+			}
+		}
+	}
+	return sortedSet(set)
+}
+
+func homeClaudeJSON() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(home, ".claude.json")
+}
+
+func sortedSet(set map[string]bool) string {
+	names := make([]string, 0, len(set))
+	for k := range set {
+		names = append(names, k)
+	}
+	sort.Strings(names)
+	return strings.Join(names, " ")
+}
+
 func bumpCounter(sid string) int {
 	if sid == "" {
 		sid = "x"
 	}
-	p := filepath.Join(ConfigDir(), ".sa-count-"+sid)
+	p := filepath.Join(ConfigDir(), ".sa-count-"+sessionKey(sid))
 	n := 0
 	if b, err := os.ReadFile(p); err == nil {
 		n, _ = strconv.Atoi(strings.TrimSpace(string(b)))
@@ -284,12 +468,18 @@ func bumpCounter(sid string) int {
 	return n
 }
 
+func sessionKey(sid string) string {
+	sum := sha256.Sum256([]byte(sid))
+	return hex.EncodeToString(sum[:])[:16]
+}
+
 // spawnWorker writes the signals to a temp file and starts `cockpit worker` as a
 // fully detached process (own process group, /dev/null fds) so it outlives this
 // hook and never blocks the turn.
 func spawnWorker(signals string) {
 	tmp, err := os.CreateTemp("", "cockpit-sig-*")
 	if err != nil {
+		debugLog("spawnWorker: temp file: %v", err)
 		return
 	}
 	_, _ = tmp.WriteString(signals)
@@ -297,6 +487,7 @@ func spawnWorker(signals string) {
 
 	exe, err := os.Executable()
 	if err != nil {
+		debugLog("spawnWorker: executable: %v", err)
 		return
 	}
 	cmd := exec.Command(exe, "worker", tmp.Name())
@@ -305,7 +496,9 @@ func spawnWorker(signals string) {
 	if null, err := os.OpenFile(os.DevNull, os.O_RDWR, 0); err == nil {
 		cmd.Stdin, cmd.Stdout, cmd.Stderr = null, null, null
 	}
-	_ = cmd.Start() // do not Wait — let it run detached
+	if err := cmd.Start(); err != nil {
+		debugLog("spawnWorker: start: %v", err)
+	}
 }
 
 func fileExists(p string) bool {
