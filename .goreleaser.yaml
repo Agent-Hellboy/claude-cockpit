@@ -1,0 +1,34 @@
+version: 2
+project_name: claude-cockpit
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: cockpit
+    main: ./cmd/cockpit
+    binary: cockpit
+    env:
+      - CGO_ENABLED=0
+    goos: [linux, darwin]
+    goarch: [amd64, arm64]
+    ldflags:
+      - -s -w -X main.version={{ .Version }}
+
+archives:
+  - id: default
+    # Asset name must match install.sh: claude-cockpit_<os>_<arch>.tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}"
+    formats: [tar.gz]
+    files:
+      - LICENSE
+      - README.md
+
+checksum:
+  name_template: "checksums.txt"
+
+release:
+  github:
+    owner: Agent-Hellboy
+    name: claude-cockpit

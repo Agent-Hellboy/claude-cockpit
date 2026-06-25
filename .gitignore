@@ -1,5 +1,11 @@
-*.bak
-*.bak.*
+# build output
+/cockpit
+/dist/
+*.test
+
+# transient cockpit state (only relevant if run in-tree)
 .model-hint
 .session-report
 .sa-count-*
+*.bak
+*.bak.*
