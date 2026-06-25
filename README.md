@@ -10,6 +10,27 @@ a skill, a subagent, MCP, graphify, or an audited third-party workflow tool.
 
 ![claude-cockpit status line](docs/statusline.png)
 
+## Screenshots
+
+The instruments are always on; suggestions appear in the rows beneath them and
+wrap to full width so nothing is truncated.
+
+**Multiple token-saving suggestions at once** (cost turns red as it climbs):
+
+![multiple suggestions](docs/bar-suggestions.png)
+
+**Offers to build a code graph** — with an ETA scaled to the repo size:
+
+![graphify build suggestion](docs/bar-graphify.png)
+
+**Flags when a cheaper model would do** the work in flight:
+
+![model downgrade suggestion](docs/bar-model.png)
+
+**Points you at the right skill** instead of redoing a workflow by hand:
+
+![skill suggestion](docs/bar-skill.png)
+
 ## Install
 
 **One command. No Go, no jq, no runtime.**
