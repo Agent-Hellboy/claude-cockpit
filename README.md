@@ -1,10 +1,12 @@
 # claude-cockpit
 
-A status line + session optimizer for [Claude Code](https://claude.com/claude-code),
-shipped as a single dependency-free binary. It keeps your context/token/cost
-usage visible so you can `/compact` on your own terms, and quietly analyzes how
-the session is going to suggest token-saving moves (cheaper model, plan mode, a
-skill/MCP, building a code graph, etc.).
+A cockpit for [Claude Code](https://claude.com/claude-code): live session
+instruments plus timely control suggestions for long-running agent work.
+
+`claude-cockpit` does not fly the session for you. It keeps the important gauges
+visible, detects when the session is drifting into expensive or repetitive work,
+and suggests the next control to use: `/compact`, `/clear`, a cheaper model,
+a skill, a subagent, MCP, graphify, or an audited third-party workflow tool.
 
 ![claude-cockpit status line](docs/statusline.png)
 
@@ -37,14 +39,14 @@ deletes transient state, and backs up `settings.json`.
 
 ## What you get
 
-**1. Status line** (`cockpit statusline`) — two rows, never truncated:
+**1. Flight instruments** (`cockpit statusline`) — two rows, never truncated:
 - **Row 1:** dir + branch (+ PR number/review state), model + effort, and a
   context-fill gauge that turns yellow ≥70%, red ≥90% with a `⚠ /compact` cue.
 - **Row 2:** session churn (`+/-` lines), output/cache tokens, 5h/7d rate-limit
   usage, and session cost.
 - **Row 3 (only when present):** the latest suggestion from the analyzer.
 
-**2. Session analyzer** (`cockpit analyze`, a `Stop` hook) — after each turn it
+**2. Control advisor** (`cockpit analyze`, a `Stop` hook) — after each turn it
 gathers cheap signals (turn count, ~context size, tool/search usage, current
 model, available Claude Code extensions, graphify state, repo size) and asks a
 fast model (`haiku`) for the 1–3 highest-leverage
@@ -52,6 +54,8 @@ optimizations *right now*. It is **advisory** — it never changes your session;
 you act on the suggestion (`/model`, Shift+Tab, `/graphify`, …).
 
 Design notes:
+- **Cockpit, not autopilot** — cockpit suggests controls and asks before risky
+  actions. It never silently changes models, installs tools, or edits settings.
 - **Cheap by construction** — signals are gathered in-process (no subprocess
   fan-out); the model only sees a compact summary, throttled by an auto-scaling
   cadence.
@@ -77,9 +81,17 @@ Design notes:
 
 ## How it works
 
-The analyzer writes its top suggestion to `~/.claude/.model-hint` and the full
-list to `~/.claude/.session-report`. The status line reads `.model-hint` to show
-row 3. A `MODEL_HINT_GUARD` env var stops the background `claude -p` call from
+Every `Stop` hook bumps a per-session counter. Cockpit analyzes short sessions
+rarely, then checks more often as the session gets long:
+
+- turns 1-9: every 10th turn
+- turns 10-24: every 5th turn
+- turns 25+: every 2nd turn
+
+When it runs, the analyzer writes a compact signal packet to a detached worker.
+The worker writes its top suggestion to `~/.claude/.model-hint` and the full list
+to `~/.claude/.session-report`. The status line reads `.model-hint` to show row
+3. A `MODEL_HINT_GUARD` env var stops the background `claude -p` call from
 re-triggering the hook.
 
 Analyzer privacy/debug controls:

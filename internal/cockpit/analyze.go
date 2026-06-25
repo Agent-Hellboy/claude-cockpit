@@ -67,9 +67,9 @@ type Signals struct {
 	RecentPrompts       []string
 }
 
-// RunAnalyze implements the Stop hook: gather cheap signals, throttle by an
-// auto-scaling cadence, and hand off to a detached worker that asks a cheap
-// model for token-saving suggestions. Returns fast so the turn never waits.
+// RunAnalyze implements the Stop hook: gather cheap cockpit signals, throttle by
+// a session-length cadence, and hand off to a detached worker that asks a cheap
+// model for control suggestions. Returns fast so the turn never waits.
 func RunAnalyze(r io.Reader) {
 	if os.Getenv("MODEL_HINT_GUARD") != "" {
 		return // don't run inside the background `claude -p`
