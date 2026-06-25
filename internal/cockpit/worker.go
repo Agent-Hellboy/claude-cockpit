@@ -20,8 +20,11 @@ Think like an aircraft cockpit:
 Control logic:
 - Model control: switch down when the work no longer needs the strongest model. Use Haiku for
   read-only exploration/subagents, Sonnet for normal coding, Opus only for hard architecture/debugging.
-- Context control: run /context when the source of bloat is unclear; use /compact with a focus before
-  a long new phase; use /clear when switching to unrelated work.
+- Context control: judge fill by context_used_pct (the real window is already accounted for). Only urge
+  /compact when context_used_pct is high (>= ~75%); run /context when the source of bloat is unclear;
+  use /clear when switching to unrelated work.
+- Budget control: if rate_5h_pct or rate_7d_pct is high (>= ~85%) or cost_usd is climbing fast, suggest
+  switching to a cheaper model and/or delegating to cheap subagents to protect the remaining budget.
 - Workflow control: use named available skills instead of restating workflows. Prefer /debug for
   failures, /code-review for review, /batch for repeated edits, /run and /verify for app checks,
   /loop for polling, /claude-api for API work, and project/user skills when names match prompts.

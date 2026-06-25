@@ -65,8 +65,30 @@ func RunStatusline(r io.Reader, w io.Writer) {
 	data, _ := io.ReadAll(r)
 	var in slInput
 	_ = json.Unmarshal(data, &in)
+	writeState(in) // bridge the authoritative context/cost/rate data to the analyzer
 	for _, line := range renderStatusline(in, readHint()) {
 		fmt.Fprintln(w, line)
+	}
+}
+
+// writeState persists the real context window, fill %, cost, and rate-limit
+// pressure that Claude Code provides here, for the analyzer to consume. Only
+// written when the window size is known, so a render without context data does
+// not clobber a good snapshot. Best-effort.
+func writeState(in slInput) {
+	if in.ContextWindow.ContextWindowSize <= 0 {
+		return
+	}
+	st := cockpitState{
+		CtxSize:   in.ContextWindow.ContextWindowSize,
+		CtxPct:    int(in.ContextWindow.UsedPercentage),
+		CtxTokens: in.ContextWindow.TotalInputTokens,
+		Cost:      in.Cost.TotalCostUSD,
+		FiveH:     int(in.RateLimits.FiveHour.UsedPercentage),
+		SevenD:    int(in.RateLimits.SevenDay.UsedPercentage),
+	}
+	if b, err := json.Marshal(st); err == nil {
+		_ = os.WriteFile(stateFile(), b, 0o644)
 	}
 }
 

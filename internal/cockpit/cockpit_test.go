@@ -343,6 +343,44 @@ func TestGatherSignalsAndCadence(t *testing.T) {
 	}
 }
 
+// The status line writes the authoritative context window; the analyzer should
+// prefer it over inferring from the model name.
+func TestContextWindowBridge(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", dir)
+	tp := filepath.Join(dir, "t.jsonl")
+	os.WriteFile(tp, []byte(`{"message":{"role":"assistant","model":"claude-opus-4-8[1m]","content":[]}}`+"\n"), 0o644)
+	in := stopInput{TranscriptPath: tp, Cwd: dir, SessionID: "s"}
+
+	// No state file yet -> inferred from model name (1M for the [1m] variant).
+	if got := collectSignals(in, 5); got.ContextSource != "inferred" || got.ContextWindow != 1_000_000 {
+		t.Fatalf("inferred path: source=%s window=%d", got.ContextSource, got.ContextWindow)
+	}
+
+	// Simulate the status line capturing real data via writeState.
+	var sl slInput
+	sl.ContextWindow.ContextWindowSize = 200000
+	sl.ContextWindow.UsedPercentage = 88
+	sl.ContextWindow.TotalInputTokens = 176000
+	sl.Cost.TotalCostUSD = 7.5
+	sl.RateLimits.FiveHour.UsedPercentage = 91
+	writeState(sl)
+
+	got := collectSignals(in, 5)
+	if got.ContextSource != "actual" {
+		t.Errorf("want actual source, got %s", got.ContextSource)
+	}
+	if got.ContextWindow != 200000 || got.ContextUsedPct != 88 {
+		t.Errorf("want real window 200000/88%%, got %d/%d", got.ContextWindow, got.ContextUsedPct)
+	}
+	if got.Rate5hPct != 91 || got.CostUSD != 7.5 {
+		t.Errorf("rate/cost not bridged: 5h=%d cost=%.2f", got.Rate5hPct, got.CostUSD)
+	}
+	if sig := formatSignals(got); !strings.Contains(sig, "context_used_pct=88 (actual)") {
+		t.Errorf("formatted signals missing actual pct:\n%s", sig)
+	}
+}
+
 func TestReadHintBoundedAndStale(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("CLAUDE_CONFIG_DIR", dir)

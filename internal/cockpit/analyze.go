@@ -50,10 +50,39 @@ type stopInput struct {
 var searchRe = regexp.MustCompile(`\b(grep|rg|find)\b`)
 var secretRe = regexp.MustCompile(`(?i)(api[_-]?key|authorization|bearer|password|token|secret)\s*[:=]\s*['"]?[^'"\s]+`)
 
+// cockpitState mirrors the snapshot the status line writes from Claude Code's
+// authoritative status payload (see statusline.go writeState).
+type cockpitState struct {
+	CtxSize   int64   `json:"ctx_size"`
+	CtxPct    int     `json:"ctx_pct"`
+	CtxTokens int64   `json:"ctx_tokens"`
+	Cost      float64 `json:"cost"`
+	FiveH     int     `json:"five_h"`
+	SevenD    int     `json:"seven_d"`
+}
+
+func readState() (cockpitState, bool) {
+	b, err := os.ReadFile(stateFile())
+	if err != nil {
+		return cockpitState{}, false
+	}
+	var s cockpitState
+	if json.Unmarshal(b, &s) != nil {
+		return cockpitState{}, false
+	}
+	return s, true
+}
+
 type Signals struct {
 	Turns               int
 	Model               string
 	ApproxContextTokens int64
+	ContextWindow       int64
+	ContextUsedPct      int
+	ContextSource       string
+	CostUSD             float64
+	Rate5hPct           int
+	Rate7dPct           int
 	ToolHistogram       map[string]int
 	Searches            int
 	FilesReread3x       int
@@ -184,10 +213,37 @@ func collectSignals(in stopInput, turns int) Signals {
 		prompts[i] = redactSecrets(prompts[i])
 	}
 
+	// Prefer the authoritative context/cost/rate snapshot the status line captured
+	// from Claude Code. Fall back to inferring the window from the model name only
+	// when no snapshot exists.
+	window := inferContextWindow(lastModel)
+	usedPct := 0
+	if window > 0 {
+		usedPct = int(ctxTokens * 100 / window)
+	}
+	ctxSource := "inferred"
+	var costUSD float64
+	var rate5h, rate7d int
+	if st, ok := readState(); ok && st.CtxSize > 0 {
+		window = st.CtxSize
+		usedPct = st.CtxPct
+		if st.CtxTokens > 0 {
+			ctxTokens = st.CtxTokens
+		}
+		costUSD, rate5h, rate7d = st.Cost, st.FiveH, st.SevenD
+		ctxSource = "actual"
+	}
+
 	return Signals{
 		Turns:               turns,
 		Model:               fallback(lastModel, "?"),
 		ApproxContextTokens: ctxTokens,
+		ContextWindow:       window,
+		ContextUsedPct:      usedPct,
+		ContextSource:       ctxSource,
+		CostUSD:             costUSD,
+		Rate5hPct:           rate5h,
+		Rate7dPct:           rate7d,
 		ToolHistogram:       hist,
 		Searches:            greps,
 		FilesReread3x:       dups,
@@ -207,7 +263,8 @@ func formatSignals(s Signals) string {
 	if s.GraphifyGraph {
 		graph = "yes"
 	}
-	return fmt.Sprintf(`turns=%d  model=%s  approx_context_tokens=%d
+	return fmt.Sprintf(`turns=%d  model=%s  approx_context_tokens=%d  context_window=%d  context_used_pct=%d (%s)
+cost_usd=%.2f  rate_5h_pct=%d  rate_7d_pct=%d
 tool_histogram: %s
 searches=%d  files_reread_3x+=%d
 graphify_graph=%s  repo_source_files=%s  est_graph_build=%s
@@ -216,7 +273,8 @@ available_agents: %s
 available_mcp_servers: %s
 available_plugins: %s
 recent_prompts: %s`,
-		s.Turns, fallback(s.Model, "?"), s.ApproxContextTokens,
+		s.Turns, fallback(s.Model, "?"), s.ApproxContextTokens, s.ContextWindow, s.ContextUsedPct, fallback(s.ContextSource, "inferred"),
+		s.CostUSD, s.Rate5hPct, s.Rate7dPct,
 		histString(s.ToolHistogram), s.Searches, s.FilesReread3x,
 		graph, s.RepoSourceFiles, s.EstGraphBuild,
 		s.AvailableSkills,
@@ -224,6 +282,16 @@ recent_prompts: %s`,
 		s.AvailableMCPServers,
 		s.AvailablePlugins,
 		strings.Join(s.RecentPrompts, " "))
+}
+
+// inferContextWindow guesses the model's context window from its name: the
+// 1M-context Opus variant vs the standard 200k window. Used to compute fill %.
+func inferContextWindow(model string) int64 {
+	m := strings.ToLower(model)
+	if strings.Contains(m, "1m") || strings.Contains(m, "[1m]") {
+		return 1_000_000
+	}
+	return 200_000
 }
 
 func tailEntries(path string, max int) []tEntry {

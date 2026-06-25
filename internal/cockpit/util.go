@@ -40,6 +40,11 @@ func hintFile() string   { return filepath.Join(ConfigDir(), ".model-hint") }
 func reportFile() string { return filepath.Join(ConfigDir(), ".session-report") }
 func debugFile() string  { return filepath.Join(ConfigDir(), ".cockpit-debug.log") }
 
+// stateFile holds the authoritative context/cost/rate snapshot the status line
+// receives from Claude Code, so the Stop-hook analyzer (which is not given that
+// data) can read the real context window instead of guessing from the model name.
+func stateFile() string { return filepath.Join(ConfigDir(), ".cockpit-state") }
+
 func debugLog(format string, args ...any) {
 	if os.Getenv("COCKPIT_DEBUG") != "1" {
 		return
