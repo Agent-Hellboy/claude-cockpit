@@ -100,11 +100,27 @@ rarely, then checks more often as the session gets long:
 - turns 10-24: every 5th turn
 - turns 25+: every 2nd turn
 
-When it runs, the analyzer writes a compact signal packet to a detached worker.
-The worker writes its top suggestion to `~/.claude/.model-hint` and the full list
-to `~/.claude/.session-report`. The status line reads `.model-hint` to show row
-3. A `MODEL_HINT_GUARD` env var stops the background `claude -p` call from
-re-triggering the hook.
+When it runs, the analyzer writes a compact signal packet to an **ephemeral temp
+file** (`$TMPDIR/cockpit-sig-*`) and hands the path to a detached worker. The
+worker reads it, **deletes it immediately**, and asks `claude -p` for
+suggestions. The signal packet (which includes your recent prompts) is never
+persisted to disk. The worker then writes its top suggestion to
+`~/.claude/.model-hint` and the full list to `~/.claude/.session-report`. The
+status line reads `.model-hint` to show row 3. A `MODEL_HINT_GUARD` env var stops
+the background `claude -p` call from re-triggering the hook.
+
+### Files & data
+
+| Path | Lifetime | Contents |
+|---|---|---|
+| `$TMPDIR/cockpit-sig-*` | **ephemeral** — deleted the instant the worker reads it | the signal packet sent to the model |
+| `~/.claude/.model-hint` | until the next analysis | top suggestion (status bar row 3) |
+| `~/.claude/.session-report` | until the next analysis | full 1–3 line suggestion list |
+| `~/.claude/.sa-count-<session>` | per session | turn counter driving the cadence |
+| `~/.claude/.cockpit-debug.log` | only if `COCKPIT_DEBUG=1` | minimal diagnostics |
+
+Nothing is sent anywhere except your own `claude -p` invocation. `uninstall`
+removes the persisted files above.
 
 Analyzer privacy/debug controls:
 
