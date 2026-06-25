@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -97,17 +98,22 @@ func renderStatusline(in slInput, hint string) []string {
 		dir = "."
 	}
 
+	// Gauge color/warning is driven purely by how full the window actually is.
+	// (exceeds_200k_tokens is NOT used here: on a 1M window it goes true at ~20%,
+	// which would fire the /compact cue 70 points too early.)
 	ctxPct := int(in.ContextWindow.UsedPercentage)
 	ctxColor, warn := green, ""
-	if in.Exceeds200k || ctxPct >= 90 {
-		ctxColor, warn = red, " "+red+bold+"⚠ /compact"+rst
+	if ctxPct >= 90 {
+		// U+FE0F forces emoji (not text) presentation of the warning sign.
+		ctxColor, warn = red, " "+red+bold+"⚠️ /compact"+rst
 	} else if ctxPct >= 70 {
 		ctxColor = yellow
 	}
-	ctxSeg := fmt.Sprintf("%sctx %s%s %d%%%s%s %s/%s%s%s",
-		ctxColor, bold, gauge(ctxPct), ctxPct, rst, ctxColor,
-		fmtTokens(in.ContextWindow.TotalInputTokens),
-		fmtTokens(in.ContextWindow.ContextWindowSize), rst, warn)
+	// dim "ctx" label, colored gauge, bold colored %, dim token detail.
+	ctxSeg := dim + "ctx " + rst + ctxColor + gauge(ctxPct) + " " +
+		bold + ctxColor + strconv.Itoa(ctxPct) + "%" + rst +
+		" " + dim + fmtTokens(in.ContextWindow.TotalInputTokens) + "/" +
+		fmtTokens(in.ContextWindow.ContextWindowSize) + rst + warn
 
 	branch := in.Worktree.Branch
 	if branch == "" {
@@ -130,34 +136,35 @@ func renderStatusline(in slInput, hint string) []string {
 		loc += " " + prColor + "⇡#" + num + rst
 	}
 
+	// Model name pops (bold blue); the "(1M context)" parenthetical stays dim.
 	modelName := in.Model.DisplayName
 	if modelName == "" {
 		modelName = "claude"
 	}
-	modelSeg := blue + modelName + rst
+	modelSeg := blue + bold + modelName + rst
+	if i := strings.Index(modelName, " ("); i >= 0 {
+		modelSeg = blue + bold + modelName[:i] + rst + dim + modelName[i:] + rst
+	}
 	if in.Effort.Level != "" {
 		modelSeg += " " + dim + in.Effort.Level + rst
 	}
 
-	workSeg := fmt.Sprintf("%s%s+%d%s%s/%s-%d%s%s · out %s · cache %s%s",
-		dim, green, in.Cost.TotalLinesAdded, rst, dim, red, in.Cost.TotalLinesRemoved, rst,
-		dim, fmtTokens(in.ContextWindow.TotalOutputTokens),
-		fmtTokens(in.ContextWindow.CurrentUsage.CacheReadInputTokens), rst)
+	// Row 2: bright values, dim labels — readable, not all-gray.
+	churnSeg := green + "+" + strconv.FormatInt(in.Cost.TotalLinesAdded, 10) + rst +
+		dim + "/" + rst + red + "-" + strconv.FormatInt(in.Cost.TotalLinesRemoved, 10) + rst
+	tokSeg := dim + "out " + rst + fmtTokens(in.ContextWindow.TotalOutputTokens) +
+		dim + " · cache " + rst + fmtTokens(in.ContextWindow.CurrentUsage.CacheReadInputTokens)
+	workSeg := churnSeg + dim + " · " + rst + tokSeg
 
+	// Each rate-limit window is colored independently so a hot 5h doesn't paint 7d red.
 	fiveH := int(in.RateLimits.FiveHour.UsedPercentage)
 	sevenD := int(in.RateLimits.SevenDay.UsedPercentage)
-	hi := fiveH
-	if sevenD > hi {
-		hi = sevenD
-	}
-	rlColor := green
-	if hi >= 90 {
-		rlColor = red
-	} else if hi >= 75 {
-		rlColor = yellow
-	}
-	rlSeg := fmt.Sprintf("%s5h %d%% · 7d %d%%%s", rlColor, fiveH, sevenD, rst)
-	costSeg := fmt.Sprintf("%s$%.2f%s", dim, in.Cost.TotalCostUSD, rst)
+	rlSeg := dim + "5h " + rst + pctColor(fiveH) + bold + strconv.Itoa(fiveH) + "%" + rst +
+		dim + " · 7d " + rst + pctColor(sevenD) + bold + strconv.Itoa(sevenD) + "%" + rst
+
+	// Cost colored by magnitude so a high bill is obvious at a glance.
+	costSeg := costColor(in.Cost.TotalCostUSD) + bold +
+		fmt.Sprintf("$%.2f", in.Cost.TotalCostUSD) + rst
 
 	sep := dim + " │ " + rst
 	rows := []string{

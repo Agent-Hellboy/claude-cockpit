@@ -38,14 +38,18 @@ func TestGauge(t *testing.T) {
 	if got := gauge(0); got != strings.Repeat("░", 10) {
 		t.Errorf("gauge(0)=%q", got)
 	}
-	if got := gauge(100); got != strings.Repeat("▓", 10) {
+	if got := gauge(100); got != strings.Repeat("█", 10) {
 		t.Errorf("gauge(100)=%q", got)
 	}
-	if got := gauge(150); got != strings.Repeat("▓", 10) {
+	if got := gauge(150); got != strings.Repeat("█", 10) {
 		t.Errorf("gauge over 100 should clamp: %q", got)
 	}
-	if got := gauge(50); got != strings.Repeat("▓", 5)+strings.Repeat("░", 5) {
+	if got := gauge(50); got != strings.Repeat("█", 5)+strings.Repeat("░", 5) {
 		t.Errorf("gauge(50)=%q", got)
+	}
+	// eighth-block partial: 25%% -> 2 full + a half cell + 7 empty.
+	if got := gauge(25); got != "██▌░░░░░░░" {
+		t.Errorf("gauge(25)=%q want sub-cell partial", got)
 	}
 }
 
@@ -83,10 +87,32 @@ func TestRenderStatuslineNearFull(t *testing.T) {
 		t.Fatalf("want 2 rows (no hint), got %d", len(rows))
 	}
 	p := plain(rows[0])
-	for _, want := range []string{"mcp-runtime", "⎇main", "Opus 4.8 (1M context)", "high", "ctx", "99%", "985k/1.0M", "⚠ /compact"} {
+	for _, want := range []string{"mcp-runtime", "⎇main", "Opus 4.8 (1M context)", "high", "ctx", "99%", "985k/1.0M", "⚠️ /compact"} {
 		if !strings.Contains(p, want) {
 			t.Errorf("row1 missing %q: %s", want, p)
 		}
+	}
+}
+
+// Regression: past 200k tokens on a large (1M) window must NOT fire /compact —
+// exceeds_200k_tokens is true there but the window is only ~21% full.
+func TestRenderStatuslineNoEarlyCompactWarn(t *testing.T) {
+	var in slInput
+	in.Workspace.CurrentDir = "/x/repo"
+	in.ContextWindow.UsedPercentage = 21
+	in.ContextWindow.TotalInputTokens = 211000
+	in.ContextWindow.ContextWindowSize = 1000000
+	in.Exceeds200k = true
+	p := plain(renderStatusline(in, "")[0])
+	if strings.Contains(p, "/compact") {
+		t.Errorf("should not warn at 21%%: %s", p)
+	}
+
+	// ...but at 90%+ it must warn, with the emoji-presentation glyph.
+	in.ContextWindow.UsedPercentage = 92
+	p = plain(renderStatusline(in, "")[0])
+	if !strings.Contains(p, "⚠️ /compact") {
+		t.Errorf("want emoji warn at 92%%: %s", p)
 	}
 }
 

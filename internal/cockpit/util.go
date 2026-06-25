@@ -9,17 +9,18 @@ import (
 	"unicode/utf8"
 )
 
-// ANSI colors.
+// Deep 24-bit truecolor palette — vivid, saturated, high-contrast. `dim` is a
+// readable slate for labels/separators (not the washed-out ANSI dim attribute).
 const (
 	rst     = "\033[0m"
-	dim     = "\033[2m"
 	bold    = "\033[1m"
-	green   = "\033[32m"
-	yellow  = "\033[33m"
-	red     = "\033[31m"
-	cyan    = "\033[36m"
-	blue    = "\033[34m"
-	magenta = "\033[35m"
+	green   = "\033[38;2;38;204;120m"  // emerald
+	yellow  = "\033[38;2;245;180;60m"  // amber
+	red     = "\033[38;2;245;75;75m"   // vivid red
+	cyan    = "\033[38;2;38;200;220m"  // deep cyan
+	blue    = "\033[38;2;90;150;255m"  // deep blue
+	magenta = "\033[38;2;236;100;175m" // deep pink
+	dim     = "\033[38;2;132;146;168m" // slate (secondary, still readable)
 )
 
 // ConfigDir returns the Claude Code config directory, honoring CLAUDE_CONFIG_DIR.
@@ -64,25 +65,57 @@ func fmtTokens(n int64) string {
 	}
 }
 
-// gauge renders a 10-cell ▓/░ bar for a 0-100 percentage.
+// gauge renders a 10-cell bar for a 0-100 percentage using eighth-block partials
+// (█▏▎▍▌▋▊▉) so a single cell shows sub-10% resolution — far smoother than
+// whole-cell fills. Empty cells use ░.
 func gauge(pct int) string {
 	const w = 10
-	filled := pct * w / 100
-	if filled > w {
-		filled = w
+	if pct < 0 {
+		pct = 0
 	}
-	if filled < 0 {
-		filled = 0
+	if pct > 100 {
+		pct = 100
 	}
+	eighths := pct * w * 8 / 100 // total eighth-columns filled
+	full := eighths / 8
+	rem := eighths % 8
+	partials := []string{"", "▏", "▎", "▍", "▌", "▋", "▊", "▉"}
 	var b strings.Builder
 	for i := 0; i < w; i++ {
-		if i < filled {
-			b.WriteString("▓")
-		} else {
+		switch {
+		case i < full:
+			b.WriteString("█")
+		case i == full && rem > 0:
+			b.WriteString(partials[rem])
+		default:
 			b.WriteString("░")
 		}
 	}
 	return b.String()
+}
+
+// pctColor returns green/yellow/red for a usage percentage.
+func pctColor(p int) string {
+	switch {
+	case p >= 90:
+		return red
+	case p >= 75:
+		return yellow
+	default:
+		return green
+	}
+}
+
+// costColor flags session spend: green under $5, yellow under $20, red beyond.
+func costColor(usd float64) string {
+	switch {
+	case usd >= 20:
+		return red
+	case usd >= 5:
+		return yellow
+	default:
+		return green
+	}
 }
 
 // emojiLines keeps only model output lines that begin with a non-ASCII rune
