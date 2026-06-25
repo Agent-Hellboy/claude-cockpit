@@ -20,7 +20,7 @@ const (
 	cyan    = "\033[38;2;38;200;220m"  // deep cyan
 	blue    = "\033[38;2;90;150;255m"  // deep blue
 	magenta = "\033[38;2;236;100;175m" // deep pink
-	dim     = "\033[38;2;132;146;168m" // slate (secondary, still readable)
+	dim     = "\033[38;2;90;140;190m"  // deep steel-blue for labels/separators (a real hue, not gray)
 )
 
 // ConfigDir returns the Claude Code config directory, honoring CLAUDE_CONFIG_DIR.
