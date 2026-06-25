@@ -6,11 +6,7 @@ usage visible so you can `/compact` on your own terms, and quietly analyzes how
 the session is going to suggest token-saving moves (cheaper model, plan mode, a
 skill/MCP, building a code graph, etc.).
 
-```
-mcp-runtime ⎇main ⇡#336 │ Opus 4.8 (1M context) high │ ctx ▓▓▓▓▓▓▓▓▓░ 99% 985k/1.0M ⚠ /compact
-+3197/-570 · out 12k · cache 985k │ 5h 95% · 7d 62% │ $24.30
-🤖 Switch to Haiku — current work is mechanical (rename, gofmt); doesn't need Opus, saves ~60%
-```
+![claude-cockpit status line](docs/statusline.png)
 
 ## Install
 
