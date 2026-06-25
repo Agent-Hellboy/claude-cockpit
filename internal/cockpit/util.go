@@ -9,18 +9,19 @@ import (
 	"unicode/utf8"
 )
 
-// Deep 24-bit truecolor palette — vivid, saturated, high-contrast. `dim` is a
-// readable slate for labels/separators (not the washed-out ANSI dim attribute).
+// Catppuccin Mocha — a balanced 24-bit palette designed to be easy on the eyes
+// on dark backgrounds: rich, harmonious hues rather than harsh saturation, and a
+// soft (not washed-out) secondary for labels/separators.
 const (
 	rst     = "\033[0m"
 	bold    = "\033[1m"
-	green   = "\033[38;2;38;204;120m"  // emerald
-	yellow  = "\033[38;2;245;180;60m"  // amber
-	red     = "\033[38;2;245;75;75m"   // vivid red
-	cyan    = "\033[38;2;38;200;220m"  // deep cyan
-	blue    = "\033[38;2;90;150;255m"  // deep blue
-	magenta = "\033[38;2;236;100;175m" // deep pink
-	dim     = "\033[38;2;90;140;190m"  // deep steel-blue for labels/separators (a real hue, not gray)
+	green   = "\033[38;2;166;227;161m" // Green
+	yellow  = "\033[38;2;249;226;175m" // Yellow
+	red     = "\033[38;2;243;139;168m" // Red
+	cyan    = "\033[38;2;148;226;213m" // Teal
+	blue    = "\033[38;2;137;180;250m" // Blue
+	magenta = "\033[38;2;203;166;247m" // Mauve
+	dim     = "\033[38;2;147;153;178m" // Overlay2 — soft, readable secondary
 )
 
 // ConfigDir returns the Claude Code config directory, honoring CLAUDE_CONFIG_DIR.
