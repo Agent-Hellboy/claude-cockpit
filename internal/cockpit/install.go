@@ -34,7 +34,8 @@ func Install() error {
 		"command": quote(exe) + " statusline",
 		"padding": 0,
 	}
-	setStopHook(m, quote(exe)+" analyze")
+	setEventHook(m, "Stop", quote(exe)+" analyze", "analyze")
+	setEventHook(m, "SessionEnd", quote(exe)+" cleanup", "cleanup")
 
 	if err := writeSettings(settingsPath, m); err != nil {
 		return err
@@ -50,7 +51,6 @@ func Uninstall() error {
 	exe, _ := os.Executable()
 	exe, _ = filepath.Abs(exe)
 	slCmd := quote(exe) + " statusline"
-	hookCmd := quote(exe) + " analyze"
 	settingsPath := filepath.Join(ConfigDir(), "settings.json")
 
 	if _, err := os.Stat(settingsPath); err == nil {
@@ -65,7 +65,8 @@ func Uninstall() error {
 				delete(m, "statusLine")
 			}
 		}
-		removeStopHook(m, hookCmd)
+		removeEventHook(m, "Stop", quote(exe)+" analyze", "analyze")
+		removeEventHook(m, "SessionEnd", quote(exe)+" cleanup", "cleanup")
 		if err := writeSettings(settingsPath, m); err != nil {
 			return err
 		}
@@ -131,32 +132,32 @@ func backup(path string) error {
 	return nil
 }
 
-// setStopHook appends our Stop hook, removing any prior cockpit entry first so
-// re-running install never duplicates it. Foreign hooks are preserved.
-func setStopHook(m map[string]any, cmd string) {
+// setEventHook appends our hook for the given event, removing any prior cockpit
+// entry (matched by exact command or by subcommand) first so re-running install
+// never duplicates it. Foreign hooks are preserved.
+func setEventHook(m map[string]any, event, cmd, sub string) {
 	hooks, _ := m["hooks"].(map[string]any)
 	if hooks == nil {
 		hooks = map[string]any{}
 	}
-	stop := toList(hooks["Stop"])
-	stop = filterOutCockpitCommand(stop, cmd, "analyze")
-	stop = append(stop, map[string]any{
+	list := filterOutCockpitCommand(toList(hooks[event]), cmd, sub)
+	list = append(list, map[string]any{
 		"hooks": []any{map[string]any{"type": "command", "command": cmd}},
 	})
-	hooks["Stop"] = stop
+	hooks[event] = list
 	m["hooks"] = hooks
 }
 
-func removeStopHook(m map[string]any, cmd string) {
+func removeEventHook(m map[string]any, event, cmd, sub string) {
 	hooks, _ := m["hooks"].(map[string]any)
 	if hooks == nil {
 		return
 	}
-	stop := filterOutCockpitCommand(toList(hooks["Stop"]), cmd, "analyze")
-	if len(stop) == 0 {
-		delete(hooks, "Stop")
+	list := filterOutCockpitCommand(toList(hooks[event]), cmd, sub)
+	if len(list) == 0 {
+		delete(hooks, event)
 	} else {
-		hooks["Stop"] = stop
+		hooks[event] = list
 	}
 	if len(hooks) == 0 {
 		delete(m, "hooks")

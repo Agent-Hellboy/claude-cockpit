@@ -31,10 +31,12 @@ func main() {
 	case "analyze":
 		cockpit.RunAnalyze(os.Stdin)
 	case "worker":
-		if len(os.Args) < 3 {
+		if len(os.Args) < 4 {
 			os.Exit(0)
 		}
-		cockpit.RunWorker(os.Args[2])
+		cockpit.RunWorker(os.Args[2], os.Args[3])
+	case "cleanup":
+		cockpit.RunCleanup(os.Stdin)
 	case "install":
 		if err := cockpit.Install(); err != nil {
 			fmt.Fprintln(os.Stderr, "install failed:", err)

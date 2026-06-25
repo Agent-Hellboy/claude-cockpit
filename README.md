@@ -100,27 +100,41 @@ rarely, then checks more often as the session gets long:
 - turns 10-24: every 5th turn
 - turns 25+: every 2nd turn
 
-When it runs, the analyzer writes a compact signal packet to an **ephemeral temp
-file** (`$TMPDIR/cockpit-sig-*`) and hands the path to a detached worker. The
-worker reads it, **deletes it immediately**, and asks `claude -p` for
-suggestions. The signal packet (which includes your recent prompts) is never
-persisted to disk. The worker then writes its top suggestion to
-`~/.claude/.model-hint` and the full list to `~/.claude/.session-report`. The
-status line reads `.model-hint` to show row 3. A `MODEL_HINT_GUARD` env var stops
-the background `claude -p` call from re-triggering the hook.
+When it runs, the analyzer writes a signal packet to the session's file under
+`~/.claude/cockpit-logs/` and hands it to a detached worker. The worker runs in
+**two phases**:
+
+1. **Local advisor** (`claude -p --model haiku`, no tools) — produces the 1–3
+   control suggestions. If it detects an external-capability gap with no matching
+   MCP, it appends a `TOOLGAP: <capability>` marker.
+2. **Tool discovery** (only when a `TOOLGAP` was flagged) — a focused
+   `claude -p --model haiku` with **`WebSearch`** searches the live web for a
+   current, well-maintained open-source MCP/plugin/skill for that gap and returns
+   a concrete tool name + source URL, behind the audit gate.
+
+The worker writes its top suggestion to `~/.claude/.model-hint` and the full list
+to `~/.claude/.session-report`. The status line shows **every** suggestion,
+word-wrapping each to the terminal width (from `COLUMNS`) so full sentences never
+truncate. A `MODEL_HINT_GUARD` env var stops the background `claude -p` calls
+from re-triggering the hook.
+
+Per-session signals and a full activity log are **kept for the life of the
+session** (so you can inspect what the analyzer saw and suggested) and removed
+only when the session ends, via a `SessionEnd` hook — nothing is deleted
+mid-session.
 
 ### Files & data
 
 | Path | Lifetime | Contents |
 |---|---|---|
-| `$TMPDIR/cockpit-sig-*` | **ephemeral** — deleted the instant the worker reads it | the signal packet sent to the model |
-| `~/.claude/.model-hint` | until the next analysis | top suggestion (status bar row 3) |
-| `~/.claude/.session-report` | until the next analysis | full 1–3 line suggestion list |
-| `~/.claude/.sa-count-<session>` | per session | turn counter driving the cadence |
-| `~/.claude/.cockpit-debug.log` | only if `COCKPIT_DEBUG=1` | minimal diagnostics |
+| `~/.claude/cockpit-logs/<session>.signals` | until session end | the signal packet sent to the model |
+| `~/.claude/cockpit-logs/<session>.log` | durable | timestamped activity log (analysis runs, web searches, results) |
+| `~/.claude/.model-hint` | until session end / next analysis | top suggestion |
+| `~/.claude/.session-report` | until session end / next analysis | full suggestion list (shown in the bar) |
+| `~/.claude/.sa-count-<hash>` | until session end | turn counter driving the cadence |
 
-Nothing is sent anywhere except your own `claude -p` invocation. `uninstall`
-removes the persisted files above.
+Nothing is sent anywhere except your own `claude -p` invocation (which, for tool
+discovery, performs a web search). `uninstall` removes the persisted files above.
 
 Analyzer privacy/debug controls:
 
@@ -160,6 +174,8 @@ GitHub Actions `release` workflow (goreleaser) to build and publish darwin/linux
 
 - Hooks are **advisory** in Claude Code — they can suggest, not switch models or
   enter plan mode. You act on the suggestion.
+- Tool discovery performs a live web search (via your `claude -p`) only when an
+  external-capability gap is detected; otherwise no search runs.
 - The analyzer infers your *current* model from the transcript, so an occasional
   already-on-Sonnet suggestion is harmless.
 

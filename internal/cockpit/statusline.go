@@ -66,7 +66,11 @@ func RunStatusline(r io.Reader, w io.Writer) {
 	var in slInput
 	_ = json.Unmarshal(data, &in)
 	writeState(in) // bridge the authoritative context/cost/rate data to the analyzer
-	for _, line := range renderStatusline(in, readHint()) {
+	if os.Getenv("COCKPIT_DEBUG") != "" {
+		_ = os.WriteFile(filepath.Join(ConfigDir(), ".cockpit-cols"),
+			[]byte(fmt.Sprintf("COLUMNS=%q -> termCols=%d\n", os.Getenv("COLUMNS"), termCols())), 0o644)
+	}
+	for _, line := range renderStatusline(in, readSuggestions()) {
 		fmt.Fprintln(w, line)
 	}
 }
@@ -92,26 +96,46 @@ func writeState(in slInput) {
 	}
 }
 
-func readHint() string {
-	f, err := os.Open(hintFile())
+// readSuggestions returns all current suggestion lines (the full session report)
+// so the bar can show every lever, not just the top one. Bounded by size and
+// staleness; falls back to the single hint file if no report exists.
+func readSuggestions() []string {
+	if lines := readLinesBounded(reportFile()); len(lines) > 0 {
+		return lines
+	}
+	return readLinesBounded(hintFile())
+}
+
+func readLinesBounded(path string) []string {
+	f, err := os.Open(path)
 	if err != nil {
-		return ""
+		return nil
 	}
 	defer f.Close()
 	if st, err := f.Stat(); err == nil && time.Since(st.ModTime()) > hintMaxAge {
-		return ""
+		return nil
 	}
 	b, err := io.ReadAll(io.LimitReader(f, maxHintBytes))
 	if err != nil {
-		debugLog("statusline: read hint: %v", err)
-		return ""
+		debugLog("statusline: read %s: %v", path, err)
+		return nil
 	}
-	return strings.TrimSpace(string(b))
+	var out []string
+	for _, ln := range strings.Split(string(b), "\n") {
+		if ln = strings.TrimSpace(ln); ln != "" {
+			out = append(out, ln)
+		}
+		if len(out) >= 4 { // safety cap on suggestion rows
+			break
+		}
+	}
+	return out
 }
 
 // renderStatusline builds the rows. Pure (no IO) so it is unit-testable; the
-// git fallback only runs when the worktree branch is absent.
-func renderStatusline(in slInput, hint string) []string {
+// git fallback only runs when the worktree branch is absent. Each suggestion in
+// hints becomes one or more wrapped rows below the two instrument rows.
+func renderStatusline(in slInput, hints []string) []string {
 	dir := in.Workspace.CurrentDir
 	if dir == "" {
 		dir = in.Cwd
@@ -193,10 +217,58 @@ func renderStatusline(in slInput, hint string) []string {
 		loc + sep + modelSeg + sep + ctxSeg,
 		workSeg + sep + rlSeg + sep + costSeg,
 	}
-	if hint != "" {
-		rows = append(rows, yellow+hint+rst)
+	// Each suggestion wraps across as many rows as needed so full sentences show
+	// instead of being truncated with "…".
+	cols := termCols()
+	for _, h := range hints {
+		for _, ln := range wrapText(h, cols) {
+			rows = append(rows, yellow+ln+rst)
+		}
 	}
 	return rows
+}
+
+// termCols returns the terminal width from the COLUMNS env var Claude Code sets,
+// defaulting to a safe 100 when absent.
+func termCols() int {
+	if c, err := strconv.Atoi(strings.TrimSpace(os.Getenv("COLUMNS"))); err == nil && c > 20 {
+		return c
+	}
+	return 100
+}
+
+// wrapText word-wraps s to lines no wider than width display columns. Returns nil
+// for empty input. A leading emoji counts as ~2 columns, so we keep a small
+// margin to avoid the terminal re-wrapping or truncating.
+func wrapText(s string, width int) []string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil
+	}
+	limit := width - 1
+	if limit < 20 {
+		limit = 20
+	}
+	var lines []string
+	var line string
+	lineLen := 0
+	for _, word := range strings.Fields(s) {
+		wl := displayWidth(word)
+		switch {
+		case line == "":
+			line, lineLen = word, wl
+		case lineLen+1+wl <= limit:
+			line += " " + word
+			lineLen += 1 + wl
+		default:
+			lines = append(lines, line)
+			line, lineLen = word, wl
+		}
+	}
+	if line != "" {
+		lines = append(lines, line)
+	}
+	return lines
 }
 
 func gitBranch(dir string) string {

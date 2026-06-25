@@ -100,6 +100,24 @@ func gauge(pct int) string {
 	return b.String()
 }
 
+// displayWidth approximates terminal columns for s: emoji and wide symbols count
+// as 2, combining marks (variation selector, ZWJ) as 0, everything else as 1.
+// Keeps wrapping from clipping lines that start with a 2-column emoji.
+func displayWidth(s string) int {
+	w := 0
+	for _, r := range s {
+		switch {
+		case r == 0xFE0F || r == 0x200D || (r >= 0x0300 && r <= 0x036F):
+			// zero-width: variation selector, ZWJ, combining marks
+		case r >= 0x1F000 || (r >= 0x2190 && r <= 0x2BFF) || (r >= 0x2300 && r <= 0x27BF):
+			w += 2 // emoji, arrows, symbols
+		default:
+			w++
+		}
+	}
+	return w
+}
+
 // pctColor returns green/yellow/red for a usage percentage.
 func pctColor(p int) string {
 	switch {
@@ -138,6 +156,9 @@ func emojiLines(out string, max int) []string {
 		r, _ := utf8.DecodeRuneInString(line)
 		if r == utf8.RuneError || r < 0x80 {
 			continue // ASCII-led line => prose/preamble, drop it
+		}
+		if strings.HasSuffix(line, ":") {
+			continue // emoji-led header/preamble (e.g. "✅ Two quick levers:") => drop it
 		}
 		res = append(res, line)
 		if len(res) >= max {

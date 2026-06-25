@@ -126,11 +126,13 @@ func RunAnalyze(r io.Reader) {
 		k = 5
 	}
 	if n%k != 0 {
+		logf(in.SessionID, "analyze: turn %d (cadence k=%d) — skip", n, k)
 		return
 	}
+	logf(in.SessionID, "analyze: turn %d (cadence k=%d) — run", n, k)
 
 	signals := formatSignals(collectSignals(in, n))
-	spawnWorker(signals)
+	spawnWorker(signals, in.SessionID)
 }
 
 func gatherSignals(in stopInput, turns int) string {
@@ -541,32 +543,56 @@ func sessionKey(sid string) string {
 	return hex.EncodeToString(sum[:])[:16]
 }
 
-// spawnWorker writes the signals to a temp file and starts `cockpit worker` as a
-// fully detached process (own process group, /dev/null fds) so it outlives this
-// hook and never blocks the turn.
-func spawnWorker(signals string) {
-	tmp, err := os.CreateTemp("", "cockpit-sig-*")
-	if err != nil {
-		debugLog("spawnWorker: temp file: %v", err)
+// spawnWorker writes the signals to the session's signals file (kept for the
+// session, not a throwaway temp) and starts `cockpit worker` as a fully detached
+// process (own process group, /dev/null fds) so it outlives this hook and never
+// blocks the turn.
+func spawnWorker(signals, session string) {
+	if err := os.MkdirAll(logDir(), 0o755); err != nil {
+		logf(session, "spawnWorker: mkdir logs: %v", err)
 		return
 	}
-	_, _ = tmp.WriteString(signals)
-	_ = tmp.Close()
+	sigPath := sessionSignalsFile(session)
+	if err := os.WriteFile(sigPath, []byte(signals), 0o644); err != nil {
+		logf(session, "spawnWorker: write signals: %v", err)
+		return
+	}
 
 	exe, err := os.Executable()
 	if err != nil {
-		debugLog("spawnWorker: executable: %v", err)
+		logf(session, "spawnWorker: executable: %v", err)
 		return
 	}
-	cmd := exec.Command(exe, "worker", tmp.Name())
+	cmd := exec.Command(exe, "worker", sigPath, session)
 	cmd.Env = append(os.Environ(), "MODEL_HINT_GUARD=1")
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if null, err := os.OpenFile(os.DevNull, os.O_RDWR, 0); err == nil {
 		cmd.Stdin, cmd.Stdout, cmd.Stderr = null, null, null
 	}
 	if err := cmd.Start(); err != nil {
-		debugLog("spawnWorker: start: %v", err)
+		logf(session, "spawnWorker: start: %v", err)
 	}
+}
+
+// RunCleanup removes a session's transient artifacts. Invoked by the SessionEnd
+// hook so nothing is deleted mid-session — signals and logs persist until the
+// session actually ends.
+func RunCleanup(r io.Reader) {
+	data, _ := io.ReadAll(r)
+	var in stopInput
+	_ = json.Unmarshal(data, &in)
+	if in.SessionID == "" {
+		return
+	}
+	logf(in.SessionID, "cleanup: session ended — removing transient artifacts")
+	for _, p := range []string{
+		sessionSignalsFile(in.SessionID),
+		filepath.Join(ConfigDir(), ".sa-count-"+sessionKey(in.SessionID)),
+		hintFile(), reportFile(), stateFile(),
+	} {
+		_ = os.Remove(p)
+	}
+	// Keep the .log itself as the durable record; the user can prune cockpit-logs.
 }
 
 func fileExists(p string) bool {

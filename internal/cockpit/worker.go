@@ -1,6 +1,7 @@
 package cockpit
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"strings"
@@ -36,56 +37,107 @@ Control logic:
 - MCP control: if MCP servers are available, recommend the exact server name when obvious. Mention
   /mcp to inspect servers, @server:resource references, MCP prompt commands, and MCP Tool Search when
   many tools exist or schemas are bloating context.
-- Missing-tool control: if repeated patterns show a missing integration, ask whether to audit/install
-  a concrete MCP/server/plugin/skill. Do not tell the user to install blindly.
-- Audit gate: for any new open-source MCP, skill, plugin, or agent optimization tool, phrase it as an
-  audit/install question. Ask the user to audit repo trust, permissions, env vars, network access,
-  package source, and secrets before enabling it.
-- Open-source matching: Context7 for repeated official docs/API lookups; Serena or graphify for
-  repeated codebase symbol search; Playwright or Chrome DevTools MCP for UI/browser/perf/screenshot
-  and E2E work; Tavily for deep web research; Sequential Thinking only for genuinely hard planning;
-  SuperClaude only when the user wants a broader command/agent framework and will audit it first.
-- Installed framework control: if SuperClaude or /sc skills/plugins are available, recommend the
-  matching /sc:* command for research, brainstorming, implementation, testing, PM, or token efficiency.
+- Tool gap signal: if the recent prompts involve an EXTERNAL capability — browser/UI/screenshot/E2E, a
+  database, external docs/API references, design files, deep web research, logs/observability, etc. —
+  and available_mcp_servers has no matching server, add ONE extra final line, exactly:
+  TOOLGAP: <short capability phrase>   (e.g. "TOOLGAP: browser automation and screenshots"). A separate
+  step will search the web for a concrete tool — do NOT name or invent a tool/URL yourself. A built-in
+  skill does not replace a real integration. Omit the TOOLGAP line entirely if no external capability
+  is in play.
 - Code graph control: if graphify_graph=yes, recommend ` + "`graphify query`" + ` instead of grep/find.
   If graphify_graph=no and searching is non-trivial, ask permission to run ` + "`/graphify .`" + ` and
   state est_graph_build for repo_source_files files.
 - Redundancy control: call out repeated reads/searches and suggest changing approach.
 
 Be practical and holistic. Do not nitpick exact counts. Prefer a concrete control action over generic
-advice. Recommend by name when you can. Never recommend random third-party tools unless the signals
-show a repeated pain they solve.
-Each line under 110 chars, start with an emoji. If the session is already efficient, output exactly:
+advice. Recommend by name when you can.
+Each suggestion line starts with an emoji and is one full sentence (it may be long; it will be wrapped
+for display — do not truncate it yourself). If the session is already efficient, output exactly:
 ✅ session looks efficient.`
 
-// RunWorker reads signals from sigPath, asks a cheap model for suggestions, and
-// writes the result to the report + hint files. Runs detached from the hook.
-func RunWorker(sigPath string) {
+// searchInstr drives the focused, web-search-backed tool-discovery step.
+const searchInstr = `Use web search to find the single best CURRENT, well-maintained, popular open-source
+Claude Code integration for the need below: an MCP server, a Claude Code plugin, or a skill.
+Need: %s
+
+Reply with EXACTLY one line and nothing else: an emoji, the tool name, a short why, and its source URL,
+phrased as an audit-first suggestion. Example:
+🔌 Audit Playwright MCP for live browser control + screenshots — https://github.com/microsoft/playwright-mcp
+If you cannot find a credible match, reply with an empty line.`
+
+// RunWorker reads signals for a session and writes suggestions to the report +
+// hint files. Two phases: (1) a fast local advisor; (2) only if that flags a
+// TOOLGAP, a focused web search for a concrete tool. Signals/logs are kept for
+// the session (cleaned up by RunCleanup at session end), not deleted here.
+func RunWorker(sigPath, session string) {
 	sig, err := os.ReadFile(sigPath)
-	_ = os.Remove(sigPath)
 	if err != nil {
-		debugLog("worker: read signals %s: %v", sigPath, err)
+		logf(session, "worker: read signals %s: %v", sigPath, err)
 		return
 	}
+	logf(session, "worker: start (signals %d bytes)", len(sig))
 
-	prompt := instr + "\n\nSIGNALS:\n" + string(sig)
-	cmd := exec.Command("claude", "-p", "--model", "haiku", prompt)
-	cmd.Env = append(os.Environ(), "MODEL_HINT_GUARD=1")
-	out, err := cmd.Output()
+	// Phase 1: local advisor, no tools.
+	out1, err := runClaude("", instr+"\n\nSIGNALS:\n"+string(sig))
 	if err != nil {
-		debugLog("worker: claude failed: %v", err)
+		logf(session, "worker: phase1 claude failed: %v", err)
 		return
 	}
+	logf(session, "worker: phase1 output:\n%s", strings.TrimSpace(out1))
 
-	lines := emojiLines(string(out), 3)
+	lines := emojiLines(out1, 3)
+	gap := extractToolGap(out1)
+
+	// Phase 2: only when a tool gap was flagged.
+	if gap != "" {
+		logf(session, "worker: tool gap detected: %q -> web search", gap)
+		out2, err := runClaude("WebSearch", fmt.Sprintf(searchInstr, gap))
+		if err != nil {
+			logf(session, "worker: phase2 search failed: %v", err)
+		} else {
+			logf(session, "worker: phase2 search output:\n%s", strings.TrimSpace(out2))
+			if tool := emojiLines(out2, 1); len(tool) > 0 {
+				lines = append(lines, tool[0])
+				if len(lines) > 4 {
+					lines = lines[:4]
+				}
+			}
+		}
+	}
+
 	if len(lines) == 0 {
-		debugLog("worker: no suggestion lines in output")
+		logf(session, "worker: no suggestion lines produced")
 		return
 	}
 	if err := os.WriteFile(reportFile(), []byte(strings.Join(lines, "\n")+"\n"), 0o644); err != nil {
-		debugLog("worker: write report: %v", err)
+		logf(session, "worker: write report: %v", err)
 	}
 	if err := os.WriteFile(hintFile(), []byte(lines[0]), 0o644); err != nil {
-		debugLog("worker: write hint: %v", err)
+		logf(session, "worker: write hint: %v", err)
 	}
+	logf(session, "worker: wrote %d suggestion line(s); hint=%q", len(lines), lines[0])
+}
+
+// runClaude runs `claude -p --model haiku` with the prompt on stdin (the arg
+// form clashes with --allowedTools). allowTools is a space-separated list or "".
+func runClaude(allowTools, prompt string) (string, error) {
+	args := []string{"-p", "--model", "haiku"}
+	if allowTools != "" {
+		args = append(args, "--allowedTools", allowTools)
+	}
+	cmd := exec.Command("claude", args...)
+	cmd.Stdin = strings.NewReader(prompt)
+	cmd.Env = append(os.Environ(), "MODEL_HINT_GUARD=1")
+	out, err := cmd.Output()
+	return string(out), err
+}
+
+func extractToolGap(out string) string {
+	for _, ln := range strings.Split(out, "\n") {
+		ln = strings.TrimSpace(ln)
+		if s, ok := strings.CutPrefix(ln, "TOOLGAP:"); ok {
+			return strings.TrimSpace(s)
+		}
+	}
+	return ""
 }

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 // strip ANSI for readable assertions.
@@ -82,7 +83,7 @@ func TestRenderStatuslineNearFull(t *testing.T) {
 	in.ContextWindow.TotalInputTokens = 985000
 	in.ContextWindow.ContextWindowSize = 1000000
 	in.Cost.TotalCostUSD = 24.3
-	rows := renderStatusline(in, "")
+	rows := renderStatusline(in, nil)
 	if len(rows) != 2 {
 		t.Fatalf("want 2 rows (no hint), got %d", len(rows))
 	}
@@ -103,14 +104,14 @@ func TestRenderStatuslineNoEarlyCompactWarn(t *testing.T) {
 	in.ContextWindow.TotalInputTokens = 211000
 	in.ContextWindow.ContextWindowSize = 1000000
 	in.Exceeds200k = true
-	p := plain(renderStatusline(in, "")[0])
+	p := plain(renderStatusline(in, nil)[0])
 	if strings.Contains(p, "/compact") {
 		t.Errorf("should not warn at 21%%: %s", p)
 	}
 
 	// ...but at 90%+ it must warn, with the emoji-presentation glyph.
 	in.ContextWindow.UsedPercentage = 92
-	p = plain(renderStatusline(in, "")[0])
+	p = plain(renderStatusline(in, nil)[0])
 	if !strings.Contains(p, "⚠️ /compact") {
 		t.Errorf("want emoji warn at 92%%: %s", p)
 	}
@@ -122,7 +123,7 @@ func TestRenderStatuslinePRAndHint(t *testing.T) {
 	in.Worktree.Branch = "feat"
 	in.PR.Number = json.Number("336")
 	in.PR.ReviewState = "APPROVED"
-	rows := renderStatusline(in, "💡 use sonnet")
+	rows := renderStatusline(in, []string{"💡 use sonnet"})
 	if len(rows) != 3 {
 		t.Fatalf("want 3 rows (with hint), got %d", len(rows))
 	}
@@ -180,8 +181,8 @@ func TestSettingsMergePreservesAndDedups(t *testing.T) {
 		},
 	}
 	cmd := "'/x/cockpit' analyze"
-	setStopHook(m, cmd)
-	setStopHook(m, cmd) // twice -> must not duplicate
+	setEventHook(m, "Stop", cmd, "analyze")
+	setEventHook(m, "Stop", cmd, "analyze") // twice -> must not duplicate
 
 	stop := toList(m["hooks"].(map[string]any)["Stop"])
 	cmds := map[string]int{}
@@ -201,7 +202,7 @@ func TestSettingsMergePreservesAndDedups(t *testing.T) {
 	}
 
 	// uninstall removes only ours, keeps foreign + other keys.
-	removeStopHook(m, cmd)
+	removeEventHook(m, "Stop", cmd, "analyze")
 	delete(m, "statusLine") // simulate Uninstall's statusLine drop
 	stop = toList(m["hooks"].(map[string]any)["Stop"])
 	if len(stop) != 1 {
@@ -231,7 +232,7 @@ func TestSetStopHookReplacesOldCockpitPath(t *testing.T) {
 			},
 		},
 	}
-	setStopHook(m, quote("/new path/o'connor/cockpit")+" analyze")
+	setEventHook(m, "Stop", quote("/new path/o'connor/cockpit")+" analyze", "analyze")
 
 	stop := toList(m["hooks"].(map[string]any)["Stop"])
 	cmds := map[string]int{}
@@ -253,7 +254,7 @@ func TestSetStopHookReplacesOldCockpitPath(t *testing.T) {
 
 func TestMalformedStopHookReplaced(t *testing.T) {
 	m := map[string]any{"hooks": map[string]any{"Stop": map[string]any{"bad": true}}}
-	setStopHook(m, quote("/x/cockpit")+" analyze")
+	setEventHook(m, "Stop", quote("/x/cockpit")+" analyze", "analyze")
 	stop := toList(m["hooks"].(map[string]any)["Stop"])
 	if len(stop) != 1 {
 		t.Fatalf("want one hook group, got %#v", stop)
@@ -381,7 +382,36 @@ func TestContextWindowBridge(t *testing.T) {
 	}
 }
 
-func TestReadHintBoundedAndStale(t *testing.T) {
+func TestWrapText(t *testing.T) {
+	if got := wrapText("", 100); got != nil {
+		t.Errorf("empty -> %v want nil", got)
+	}
+	long := "🎯 Model downgrade: switch to Sonnet because the recent prompts are all mechanical UI testing work"
+	got := wrapText(long, 40)
+	if len(got) < 2 {
+		t.Fatalf("expected wrap into multiple lines, got %v", got)
+	}
+	for _, ln := range got {
+		if utf8.RuneCountInString(ln) > 40 {
+			t.Errorf("line exceeds width: %q (%d)", ln, utf8.RuneCountInString(ln))
+		}
+	}
+	if strings.Join(got, " ") != long {
+		t.Errorf("wrap lost/changed words: %q", strings.Join(got, " "))
+	}
+}
+
+func TestExtractToolGap(t *testing.T) {
+	out := "🎯 switch model\n📉 use graphify\nTOOLGAP: browser automation and screenshots\n"
+	if got := extractToolGap(out); got != "browser automation and screenshots" {
+		t.Errorf("extractToolGap=%q", got)
+	}
+	if got := extractToolGap("🎯 all good\n✅ efficient"); got != "" {
+		t.Errorf("no gap should be empty, got %q", got)
+	}
+}
+
+func TestReadSuggestionsBoundedAndStale(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("CLAUDE_CONFIG_DIR", dir)
 
@@ -389,15 +419,16 @@ func TestReadHintBoundedAndStale(t *testing.T) {
 	if err := os.WriteFile(hintFile(), []byte(huge), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if got := readHint(); len(got) != maxHintBytes {
-		t.Fatalf("hint length=%d want %d", len(got), maxHintBytes)
+	got := readSuggestions() // no report file -> falls back to the hint file
+	if len(got) != 1 || len(got[0]) != maxHintBytes {
+		t.Fatalf("bounded read: got %d lines, first len=%d want %d", len(got), len(got[0]), maxHintBytes)
 	}
 
 	stale := time.Now().Add(-hintMaxAge - time.Minute)
 	if err := os.Chtimes(hintFile(), stale, stale); err != nil {
 		t.Fatal(err)
 	}
-	if got := readHint(); got != "" {
-		t.Fatalf("stale hint should be ignored, got %q", got)
+	if got := readSuggestions(); got != nil {
+		t.Fatalf("stale suggestions should be ignored, got %v", got)
 	}
 }
