@@ -13,13 +13,13 @@ import (
 
 // applyPlan is the structured fix the apply worker returns.
 type applyPlan struct {
-	Summary         string            `json:"summary"`
-	ClaudeMDSection string            `json:"claude_md_section"`
-	MCPServers      map[string]any    `json:"mcp_servers"`
-	ShellCommands   []string          `json:"shell_commands"`
-	SkillName       string            `json:"skill_name"`
-	SkillContent    string            `json:"skill_content"`
-	Notes           string            `json:"notes"`
+	Summary         string         `json:"summary"`
+	ClaudeMDSection string         `json:"claude_md_section"`
+	MCPServers      map[string]any `json:"mcp_servers"`
+	ShellCommands   []string       `json:"shell_commands"`
+	SkillName       string         `json:"skill_name"`
+	SkillContent    string         `json:"skill_content"`
+	Notes           string         `json:"notes"`
 }
 
 const applyInstr = `You are the cockpit fix applier. The user accepted a cockpit suggestion and wants it applied.
