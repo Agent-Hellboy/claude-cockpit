@@ -171,16 +171,12 @@ func renderStatusline(in slInput, hints []classifiedSuggestion, snap cockpitSnap
 	}
 
 	ctxPct := int(in.ContextWindow.UsedPercentage)
-	ctxColor, warn := green, ""
+	ctxWarn := ""
 	if ctxPct >= 90 {
-		ctxColor, warn = red, " "+red+bold+"⚠️ /compact"+rst
-	} else if ctxPct >= 70 {
-		ctxColor = yellow
+		ctxWarn = " " + red + bold + "⚠ /compact" + rst
 	}
-	ctxSeg := dim + "ctx " + rst + ctxColor + gauge(ctxPct) + " " +
-		bold + ctxColor + strconv.Itoa(ctxPct) + "%" + rst +
-		" " + dim + fmtTokens(in.ContextWindow.TotalInputTokens) + "/" +
-		fmtTokens(in.ContextWindow.ContextWindowSize) + rst + warn
+	ctxSeg := formatCtxInstrument(ctxPct, in.ContextWindow.TotalInputTokens,
+		in.ContextWindow.ContextWindowSize, ctxWarn)
 
 	branch := in.Worktree.Branch
 	if branch == "" {
@@ -207,7 +203,7 @@ func renderStatusline(in slInput, hints []classifiedSuggestion, snap cockpitSnap
 	if phase == "" {
 		phase = "cruise"
 	}
-	phaseSeg := dim + strings.ToUpper(phase) + rst
+	phaseSeg := formatPhaseBadge(phase)
 
 	modelName := in.Model.DisplayName
 	if modelName == "" {
@@ -235,7 +231,7 @@ func renderStatusline(in slInput, hints []classifiedSuggestion, snap cockpitSnap
 	costSeg := costColor(in.Cost.TotalCostUSD) + bold +
 		fmt.Sprintf("$%.2f", in.Cost.TotalCostUSD) + rst
 
-	sep := dim + " │ " + rst
+	sep := dim + " ┊ " + rst
 	mode := displayMode()
 	var rows []string
 	switch mode {
@@ -243,35 +239,29 @@ func renderStatusline(in slInput, hints []classifiedSuggestion, snap cockpitSnap
 		rows = []string{loc + sep + modelSeg + sep + ctxSeg}
 	default:
 		rows = []string{
-			phaseSeg + " " + loc + sep + modelSeg + sep + ctxSeg,
-			workSeg + sep + rlSeg + sep + costSeg,
+			phaseSeg + loc + sep + modelSeg + sep + ctxSeg,
+			dim + "SYS " + rst + workSeg + sep + rlSeg + sep + costSeg,
 		}
 	}
 
 	if mode != "minimal" {
-		rows = append(rows, dim+buildMemoLine(snap, st, dir)+rst)
+		memo := buildMemoLine(snap, st, dir)
+		memo = strings.TrimPrefix(memo, "memo: ")
+		rows = append(rows, dim+"▸ MEMO "+rst+dim+memo+rst)
 	}
 	if mode == "debug" && snap.ToolTop != "" {
-		rows = append(rows, dim+"debug: tools "+snap.ToolTop+rst)
+		rows = append(rows, dim+"▸ DBG  tools "+snap.ToolTop+rst)
 	}
 
 	cols := termCols()
+	if len(hints) > 0 && mode != "minimal" {
+		rows = append(rows, ecamTopRule(cols))
+	}
 	for i, h := range hints {
-		tag := fmt.Sprintf("[%d] %s ", i+1, h.Level.String())
-		body := h.Text
-		col := alertColor(h.Level)
-		wrapped := wrapText(tag+body, cols)
-		for j, ln := range wrapped {
-			if j == 0 {
-				ln = strings.TrimPrefix(ln, tag)
-				rows = append(rows, dim+tag+rst+col+ln+rst)
-			} else {
-				rows = append(rows, dim+"      "+rst+col+ln+rst)
-			}
-		}
+		rows = append(rows, formatECAMMessage(i, h, cols)...)
 	}
 	if len(hints) > 0 {
-		rows = append(rows, dim+"apply: cockpit apply <n>  ·  cockpit checklist <topic>"+rst)
+		rows = append(rows, formatApplyCTA(len(hints)))
 	}
 	return rows
 }
@@ -317,6 +307,85 @@ func wrapText(s string, width int) []string {
 		lines = append(lines, line)
 	}
 	return lines
+}
+
+// formatPhaseBadge renders the flight-phase indicator (PFD header).
+func formatPhaseBadge(phase string) string {
+	label := strings.ToUpper(phaseLabel(phase))
+	col := phaseColor(phase)
+	return col + bold + "▌" + label + "▐" + rst + " "
+}
+
+func phaseColor(phase string) string {
+	switch strings.ToLower(strings.TrimSpace(phase)) {
+	case "emergency", "emer":
+		return red
+	case "preflight":
+		return blue
+	case "approach":
+		return yellow
+	case "landing":
+		return cyan
+	default:
+		return green
+	}
+}
+
+func formatCtxInstrument(pct int, used, total int64, warn string) string {
+	col := green
+	if pct >= 90 {
+		col = red
+	} else if pct >= 70 {
+		col = yellow
+	}
+	return dim + "CTX " + rst + col + "▕" + gauge(pct) + "▏ " +
+		bold + col + strconv.Itoa(pct) + "%" + rst +
+		dim + " " + fmtTokens(used) + "/" + fmtTokens(total) + rst + warn
+}
+
+func ecamTopRule(cols int) string {
+	title := "ECAM"
+	dashes := cols - len(title) - 5 // "╭─ " + " ╮"
+	if dashes < 4 {
+		dashes = 4
+	}
+	return dim + "╭─ " + rst + cyan + bold + title + rst + dim + strings.Repeat("─", dashes) + "╮" + rst
+}
+
+func formatECAMMessage(idx int, h classifiedSuggestion, cols int) []string {
+	num := fmt.Sprintf("[%d]", idx+1)
+	lvl := h.Level.String()
+	prefix := dim + num + rst + " " + alertColor(h.Level) + bold + lvl + rst + dim + " │ " + rst
+	prefixW := displayWidth(num + " " + lvl + " │ ")
+	limit := cols - prefixW - 1
+	if limit < 24 {
+		limit = 24
+	}
+	wrapped := wrapText(h.Text, limit)
+	if len(wrapped) == 0 {
+		return nil
+	}
+	col := alertColor(h.Level)
+	var rows []string
+	for j, ln := range wrapped {
+		if j == 0 {
+			rows = append(rows, prefix+col+ln+rst)
+		} else {
+			rows = append(rows, dim+strings.Repeat(" ", len(num)+1)+rst+dim+"│ "+rst+col+ln+rst)
+		}
+	}
+	return rows
+}
+
+func formatApplyCTA(count int) string {
+	var nums []string
+	for i := 1; i <= count && i <= 9; i++ {
+		nums = append(nums, cyan+bold+strconv.Itoa(i)+rst)
+	}
+	joined := strings.Join(nums, dim+" · "+rst)
+	return dim + "╰─ " + rst + green + bold + "EXEC" + rst + dim + " ▸ " + rst +
+		bold + "cockpit apply " + rst + joined +
+		dim + "  ·  checklist <topic>" + rst
 }
 
 func gitBranch(dir string) string {

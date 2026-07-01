@@ -88,7 +88,7 @@ func TestRenderStatuslineNearFull(t *testing.T) {
 		t.Fatalf("want at least 2 rows, got %d", len(rows))
 	}
 	p := plain(rows[0])
-	for _, want := range []string{"mcp-runtime", "⎇main", "Opus 4.8 (1M context)", "high", "ctx", "99%", "985k/1.0M", "⚠️ /compact"} {
+	for _, want := range []string{"mcp-runtime", "⎇main", "Opus 4.8 (1M context)", "high", "CTX", "99%", "985k/1.0M", "⚠ /compact"} {
 		if !strings.Contains(p, want) {
 			t.Errorf("row1 missing %q: %s", want, p)
 		}
@@ -112,8 +112,8 @@ func TestRenderStatuslineNoEarlyCompactWarn(t *testing.T) {
 	// ...but at 90%+ it must warn, with the emoji-presentation glyph.
 	in.ContextWindow.UsedPercentage = 92
 	p = plain(renderStatusline(in, nil, cockpitSnapshot{}, cockpitState{})[0])
-	if !strings.Contains(p, "⚠️ /compact") {
-		t.Errorf("want emoji warn at 92%%: %s", p)
+	if !strings.Contains(p, "⚠ /compact") {
+		t.Errorf("want compact warn at 92%%: %s", p)
 	}
 }
 
@@ -126,17 +126,23 @@ func TestRenderStatuslinePRAndHint(t *testing.T) {
 	rows := renderStatusline(in, []classifiedSuggestion{
 		{Level: AlertAdv, Text: "💡 use sonnet"},
 	}, cockpitSnapshot{Phase: "cruise"}, cockpitState{})
-	if len(rows) != 5 {
-		t.Fatalf("want 5 rows (phase+2 instruments+memo+hint+footer), got %d", len(rows))
+	if len(rows) != 6 {
+		t.Fatalf("want 6 rows (PFD×2+memo+ECAM header+hint+EXEC), got %d", len(rows))
+	}
+	if !strings.Contains(plain(rows[0]), "▌CRUISE▐") {
+		t.Errorf("phase badge missing: %s", plain(rows[0]))
 	}
 	if !strings.Contains(plain(rows[0]), "⇡#336") {
 		t.Errorf("PR segment missing: %s", plain(rows[0]))
 	}
-	if !strings.Contains(plain(rows[3]), "[1]") || !strings.Contains(plain(rows[3]), "use sonnet") {
-		t.Errorf("hint row wrong: %q", plain(rows[3]))
+	if !strings.Contains(plain(rows[3]), "ECAM") {
+		t.Errorf("ECAM header missing: %q", plain(rows[3]))
 	}
-	if !strings.Contains(plain(rows[4]), "cockpit apply") {
-		t.Errorf("apply footer missing: %q", plain(rows[4]))
+	if !strings.Contains(plain(rows[4]), "[1]") || !strings.Contains(plain(rows[4]), "use sonnet") {
+		t.Errorf("hint row wrong: %q", plain(rows[4]))
+	}
+	if !strings.Contains(plain(rows[5]), "EXEC") || !strings.Contains(plain(rows[5]), "cockpit apply") {
+		t.Errorf("apply footer missing: %q", plain(rows[5]))
 	}
 }
 
