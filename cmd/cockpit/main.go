@@ -8,7 +8,6 @@
 //	cockpit uninstall    # remove cockpit settings and transient state
 //	cockpit list         # show numbered suggestions
 //	cockpit apply N      # accept suggestion N — updates CLAUDE.md, MCP, skills
-//	cockpit prefs        # show automatically learned operator preferences
 //	cockpit worker FILE  # internal: detached background classifier (not for direct use)
 //	cockpit version      # print version
 package main
@@ -27,7 +26,7 @@ var version = "dev"
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: cockpit {statusline|analyze|install|uninstall|list|apply|prefs|worker|version}")
+		fmt.Fprintln(os.Stderr, "usage: cockpit {statusline|analyze|install|uninstall|list|apply|worker|version}")
 		os.Exit(2)
 	}
 	switch os.Args[1] {
@@ -37,8 +36,6 @@ func main() {
 		cockpit.RunAnalyze(os.Stdin)
 	case "list":
 		cockpit.RunList(os.Stdout)
-	case "prefs", "learning":
-		cockpit.RunPrefs(os.Stdout)
 	case "apply":
 		fs := flag.NewFlagSet("apply", flag.ExitOnError)
 		yes := fs.Bool("yes", false, "apply without confirmation prompt")

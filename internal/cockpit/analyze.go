@@ -133,7 +133,6 @@ func RunAnalyze(r io.Reader) {
 	}
 	logf(in.SessionID, "analyze: turn %d (cadence k=%d) — run", n, k)
 
-	LearnFromSession(in.TranscriptPath, in.SessionID, in.Cwd)
 	signals := formatSignals(collectSignals(in, n))
 	spawnWorker(signals, in.SessionID)
 }
@@ -277,7 +276,6 @@ available_skills: %s
 available_agents: %s
 available_mcp_servers: %s
 available_plugins: %s
-user_preferences: %s
 recent_prompts: %s`,
 		s.Turns, fallback(s.Model, "?"), s.ApproxContextTokens, s.ContextWindow, s.ContextUsedPct, fallback(s.ContextSource, "inferred"),
 		s.CostUSD, s.Rate5hPct, s.Rate7dPct,
@@ -287,7 +285,6 @@ recent_prompts: %s`,
 		s.AvailableAgents,
 		s.AvailableMCPServers,
 		s.AvailablePlugins,
-		formatLearningForSignals(),
 		strings.Join(s.RecentPrompts, " "))
 }
 
@@ -590,9 +587,6 @@ func RunCleanup(r io.Reader) {
 		return
 	}
 	logf(in.SessionID, "cleanup: session ended — removing transient artifacts")
-	LearnFromSession(in.TranscriptPath, in.SessionID, in.Cwd)
-	flushPendingSuggestions()
-	clearSessionCursor(in.SessionID)
 	for _, p := range []string{
 		sessionSignalsFile(in.SessionID),
 		filepath.Join(ConfigDir(), ".sa-count-"+sessionKey(in.SessionID)),

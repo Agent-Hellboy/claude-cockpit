@@ -120,26 +120,23 @@ Restart Claude Code or run `/hooks` after MCP servers are added so they load.
 | `--dry-run` | Show the plan, make no changes |
 | `--cwd DIR` | Target a project directory (default: current dir) |
 
-## Learning your preferences
+## The cockpit metaphor
 
-Learning is **fully automatic** — you do not configure anything. Cockpit watches
-your session and builds an operator profile in
-`~/.claude/.cockpit-learning.json`:
+Real aircraft cockpits do not learn pilot preferences. They give every operator the
+same **instruments**, surface **warnings** for the current flight condition (like
+ECAM/EICAS), and expose **controls** the pilot pulls deliberately.
 
-| Signal | What cockpit learns |
+claude-cockpit works the same way:
+
+| Real cockpit | claude-cockpit |
 |---|---|
-| **Observed** | What you actually do — `graphify query`, `/model`, `/loop`, Explore subagents, etc. |
-| **Accepted** | Suggestions you accept via `cockpit apply <n>` |
-| **Ignored** | Suggestions shown in the bar but replaced or skipped without action |
+| Gauges (altitude, airspeed, fuel) | Context fill, model, cost, rate limits |
+| Phase-aware warnings | Advisor reads live session signals each turn |
+| Standardized controls | `/compact`, `/model`, graphify, MCP, subagents |
+| Pilot pulls the lever | You choose — or `cockpit apply <n>` after confirming |
 
-Future advisor runs read this profile and prioritize levers you use, de-emphasize
-ones you ignore, and avoid repeating what you just applied.
-
-```bash
-cockpit prefs    # read-only view of what cockpit learned
-```
-
-Learning persists across sessions. It is not wiped when a session ends.
+Nothing auto-adapts to your history. The bar shows instruments and the next
+control worth considering **right now**; you decide whether to act.
 
 ## Commands
 
@@ -152,7 +149,6 @@ Learning persists across sessions. It is not wiped when a session ends.
 | `cockpit list` | Show numbered suggestions |
 | `cockpit apply N` | Accept suggestion N — updates `CLAUDE.md`, MCP, skills (with confirmation) |
 | `cockpit apply N --dry-run` | Preview what `apply` would do |
-| `cockpit prefs` | Show automatically learned operator preferences |
 | `cockpit version` | Print the installed version |
 
 Uninstall:
