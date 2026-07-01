@@ -496,3 +496,31 @@ func TestRemoveSuggestion(t *testing.T) {
 		t.Fatalf("after remove: %v", got)
 	}
 }
+
+func TestLearningRecordAndSignals(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", dir)
+
+	if got := categorizeSuggestion("🔍 Shift exploration to graphify queries"); got != "graphify" {
+		t.Fatalf("category=%q want graphify", got)
+	}
+	if got := categorizeSuggestion("💰 Delegate broad reads to Explore agent"); got != "delegation" {
+		t.Fatalf("category=%q want delegation", got)
+	}
+
+	recordApplied("🔍 use graphify query first", "/tmp/my-project")
+	recordApplied("💰 Delegate to Explore agent", "/tmp/my-project")
+
+	sig := formatLearningForSignals()
+	if !strings.Contains(sig, "graphify:1") || !strings.Contains(sig, "delegation:1") {
+		t.Fatalf("signals missing counts: %q", sig)
+	}
+
+	if err := SetPrefer("mcp", "avoid"); err != nil {
+		t.Fatal(err)
+	}
+	sig = formatLearningForSignals()
+	if !strings.Contains(sig, "mcp:avoid") {
+		t.Fatalf("explicit pref missing: %q", sig)
+	}
+}

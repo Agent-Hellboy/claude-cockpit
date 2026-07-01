@@ -120,6 +120,25 @@ Restart Claude Code or run `/hooks` after MCP servers are added so they load.
 | `--dry-run` | Show the plan, make no changes |
 | `--cwd DIR` | Target a project directory (default: current dir) |
 
+## Learning your preferences
+
+Like a real cockpit, the advisor learns what levers you actually pull. Every time
+you `cockpit apply <n>`, cockpit records the category (graphify, delegation, MCP,
+model, loop, etc.) in `~/.claude/.cockpit-learning.json`. Future suggestions use
+that profile — prioritizing levers you accept and respecting explicit avoids.
+
+```bash
+cockpit prefs                    # show learned profile
+cockpit prefer graphify          # always prioritize graphify suggestions
+cockpit prefer mcp --avoid       # de-emphasize MCP suggestions
+cockpit prefer --clear mcp       # remove an explicit preference
+```
+
+Categories: `graphify`, `delegation`, `mcp`, `loop`, `model`, `context`, `skill`,
+`workflow`.
+
+Learning persists across sessions (it is not wiped when a session ends).
+
 ## Commands
 
 | Command | Purpose |
@@ -131,6 +150,9 @@ Restart Claude Code or run `/hooks` after MCP servers are added so they load.
 | `cockpit list` | Show numbered suggestions |
 | `cockpit apply N` | Accept suggestion N — updates `CLAUDE.md`, MCP, skills (with confirmation) |
 | `cockpit apply N --dry-run` | Preview what `apply` would do |
+| `cockpit prefs` | Show learned operator preferences |
+| `cockpit prefer <category>` | Explicitly prefer a lever category |
+| `cockpit prefer <category> --avoid` | De-emphasize a category in suggestions |
 | `cockpit version` | Print the installed version |
 
 Uninstall:

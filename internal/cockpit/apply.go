@@ -126,6 +126,7 @@ func RunApply(n int, cwd string, yes, dryRun bool) error {
 	if err := executePlan(cwd, suggestion, plan); err != nil {
 		return err
 	}
+	recordApplied(suggestion, cwd)
 	if err := removeSuggestion(n); err != nil {
 		debugLog("apply: remove suggestion %d: %v", n, err)
 	}

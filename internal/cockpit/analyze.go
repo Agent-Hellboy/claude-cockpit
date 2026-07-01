@@ -274,6 +274,7 @@ available_skills: %s
 available_agents: %s
 available_mcp_servers: %s
 available_plugins: %s
+user_preferences: %s
 recent_prompts: %s`,
 		s.Turns, fallback(s.Model, "?"), s.ApproxContextTokens, s.ContextWindow, s.ContextUsedPct, fallback(s.ContextSource, "inferred"),
 		s.CostUSD, s.Rate5hPct, s.Rate7dPct,
@@ -283,6 +284,7 @@ recent_prompts: %s`,
 		s.AvailableAgents,
 		s.AvailableMCPServers,
 		s.AvailablePlugins,
+		formatLearningForSignals(),
 		strings.Join(s.RecentPrompts, " "))
 }
 

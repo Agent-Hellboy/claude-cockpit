@@ -48,6 +48,10 @@ Control logic:
   If graphify_graph=no and searching is non-trivial, ask permission to run ` + "`/graphify .`" + ` and
   state est_graph_build for repo_source_files files.
 - Redundancy control: call out repeated reads/searches and suggest changing approach.
+- Learning control: USER_PREFERENCES in SIGNALS reflects what this operator accepts over time
+  (applied levers, explicit prefer/avoid). Prioritize categories they apply often; respect explicit
+  avoid unless a gauge is critical (e.g. context >= 90%%). Do not repeat levers they recently applied
+  unless the session clearly regressed.
 
 Be practical and holistic. Do not nitpick exact counts. Prefer a concrete control action over generic
 advice. Recommend by name when you can.
