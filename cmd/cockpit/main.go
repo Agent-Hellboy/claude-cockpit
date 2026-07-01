@@ -13,7 +13,11 @@
 //	cockpit plan         # FMS-style session route and deviation
 //	cockpit status       # ECAM STATUS deferred items
 //	cockpit debrief      # post-session black-box summary
-//	cockpit worker FILE  # internal: detached background classifier (not for direct use)
+//	cockpit daemon       # advisor daemon status
+//	cockpit daemon start # start persistent ECAM advisor LRU
+//	cockpit daemon stop  # stop advisor daemon
+//	cockpit daemon run   # internal foreground daemon (not for direct use)
+//	cockpit worker FILE  # internal: one-shot advisor (not for direct use)
 //	cockpit version      # print version
 package main
 
@@ -31,7 +35,7 @@ var version = "dev"
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: cockpit {statusline|analyze|install|uninstall|list|apply|systems|checklist|plan|status|debrief|worker|version}")
+		fmt.Fprintln(os.Stderr, "usage: cockpit {statusline|analyze|install|uninstall|list|apply|systems|checklist|plan|status|debrief|daemon|worker|version}")
 		os.Exit(2)
 	}
 	switch os.Args[1] {
@@ -87,6 +91,32 @@ func main() {
 			session = os.Args[2]
 		}
 		cockpit.RunDebrief(os.Stdout, session)
+	case "daemon":
+		sub := "status"
+		if len(os.Args) > 2 {
+			sub = os.Args[2]
+		}
+		switch sub {
+		case "start":
+			if err := cockpit.StartDaemonDetached(); err != nil {
+				fmt.Fprintln(os.Stderr, "daemon start:", err)
+				os.Exit(1)
+			}
+			cockpit.RunDaemonStatus(os.Stdout)
+		case "stop":
+			if err := cockpit.StopDaemon(); err != nil {
+				fmt.Fprintln(os.Stderr, "daemon stop:", err)
+				os.Exit(1)
+			}
+			fmt.Println("Advisor daemon stopped.")
+		case "run":
+			cockpit.RunDaemon()
+		case "status", "":
+			cockpit.RunDaemonStatus(os.Stdout)
+		default:
+			fmt.Fprintln(os.Stderr, "usage: cockpit daemon {start|stop|status}")
+			os.Exit(2)
+		}
 	case "worker":
 		if len(os.Args) < 4 {
 			os.Exit(0)

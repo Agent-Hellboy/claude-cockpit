@@ -15,7 +15,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"syscall"
 )
 
 // transcript entry (subset we care about).
@@ -548,35 +547,9 @@ func sessionKey(sid string) string {
 	return hex.EncodeToString(sum[:])[:16]
 }
 
-// spawnWorker writes the signals to the session's signals file (kept for the
-// session, not a throwaway temp) and starts `cockpit worker` as a fully detached
-// process (own process group, /dev/null fds) so it outlives this hook and never
-// blocks the turn.
+// spawnWorker hands advisor work to the persistent daemon or a one-shot worker.
 func spawnWorker(signals, session string) {
-	if err := os.MkdirAll(logDir(), 0o755); err != nil {
-		logf(session, "spawnWorker: mkdir logs: %v", err)
-		return
-	}
-	sigPath := sessionSignalsFile(session)
-	if err := os.WriteFile(sigPath, []byte(signals), 0o644); err != nil {
-		logf(session, "spawnWorker: write signals: %v", err)
-		return
-	}
-
-	exe, err := os.Executable()
-	if err != nil {
-		logf(session, "spawnWorker: executable: %v", err)
-		return
-	}
-	cmd := exec.Command(exe, "worker", sigPath, session)
-	cmd.Env = append(os.Environ(), "MODEL_HINT_GUARD=1")
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	if null, err := os.OpenFile(os.DevNull, os.O_RDWR, 0); err == nil {
-		cmd.Stdin, cmd.Stdout, cmd.Stderr = null, null, null
-	}
-	if err := cmd.Start(); err != nil {
-		logf(session, "spawnWorker: start: %v", err)
-	}
+	dispatchAdvisor(signals, session)
 }
 
 // RunCleanup removes a session's transient artifacts. Invoked by the SessionEnd

@@ -472,6 +472,29 @@ func TestChecklistSteps(t *testing.T) {
 	}
 }
 
+func TestEnqueueAdvisorJob(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", dir)
+	sigPath := filepath.Join(dir, "s.signals")
+	os.WriteFile(sigPath, []byte("turns=1"), 0o644)
+	if err := enqueueAdvisorJob(sigPath, "sess"); err != nil {
+		t.Fatal(err)
+	}
+	jobs, _ := filepath.Glob(filepath.Join(jobDir(), "*.job"))
+	if len(jobs) != 1 {
+		t.Fatalf("want 1 job, got %d", len(jobs))
+	}
+}
+
+func TestProcessAlive(t *testing.T) {
+	if !processAlive(os.Getpid()) {
+		t.Fatal("current process should be alive")
+	}
+	if processAlive(999999999) {
+		t.Fatal("fake pid should not be alive")
+	}
+}
+
 func TestAdvisorLinesWithPrefix(t *testing.T) {
 	out := "WARN|⚠️ Context high — compact\nplain line\nMEMO|✅ efficient\n"
 	got := advisorLines(out, 3)

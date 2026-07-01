@@ -152,6 +152,30 @@ control worth considering **right now**; you decide whether to act.
 | Black-box debrief | `cockpit debrief` (+ auto on session end in logs) |
 | Reversionary mode | Rule-based hints if haiku advisor fails |
 | Attention getter | `COCKPIT_ALERT_CHIME=1` — terminal bell when ctx crosses 90% |
+| Advisor daemon | Persistent ECAM computer — `cockpit daemon start` |
+
+### Avionics computers (how it maps)
+
+Real glass cockpits run **multiple always-on computers**, not one-shot scripts:
+
+| Aircraft LRU | claude-cockpit |
+|---|---|
+| Data acquisition | `statusline` hook + daemon acquisition loop (refreshes snapshot) |
+| Display management (EFIS) | `statusline` render |
+| ECAM / EICAS alerting | **Advisor daemon** — queues AI analysis jobs |
+| Flight recorder | `cockpit-logs/` + debrief |
+
+On `cockpit install`, the **advisor daemon** starts automatically. The Stop hook
+enqueues analysis jobs; the daemon runs them with haiku without spawning a new
+process every turn. If the daemon is stopped, cockpit falls back to one-shot workers.
+
+```bash
+cockpit daemon status   # is the advisor LRU running?
+cockpit daemon start    # start it
+cockpit daemon stop     # stop it
+```
+
+The memo row shows `daemon on` or `daemon off`.
 
 ### Display and FMS controls
 
@@ -179,6 +203,9 @@ control worth considering **right now**; you decide whether to act.
 | `cockpit plan` | FMS session route, cost index, deviation |
 | `cockpit status` | ECAM STATUS — deferred items |
 | `cockpit debrief [session]` | Post-session black-box summary |
+| `cockpit daemon start` | Start persistent advisor daemon |
+| `cockpit daemon stop` | Stop advisor daemon |
+| `cockpit daemon status` | Show daemon state and queue depth |
 | `cockpit version` | Print the installed version |
 
 Uninstall:

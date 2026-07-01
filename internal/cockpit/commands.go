@@ -200,6 +200,11 @@ func buildMemoLine(snap cockpitSnapshot, st cockpitState, dir string) string {
 	if snap.Phase == string(PhaseEmergency) {
 		parts = append(parts, "EMER")
 	}
+	if isDaemonRunning() {
+		parts = append(parts, "daemon on")
+	} else {
+		parts = append(parts, "daemon off")
+	}
 	return "memo: " + strings.Join(parts, " · ")
 }
 
