@@ -118,6 +118,85 @@ func displayWidth(s string) int {
 	return w
 }
 
+// stripANSI removes SGR ("\033[...m") escape sequences so a colored segment can
+// be measured by its visible width.
+func stripANSI(s string) string {
+	var b strings.Builder
+	for i := 0; i < len(s); {
+		if s[i] == 0x1b && i+1 < len(s) && s[i+1] == '[' {
+			j := i + 2
+			for j < len(s) && s[j] != 'm' {
+				j++
+			}
+			i = j + 1
+			continue
+		}
+		b.WriteByte(s[i])
+		i++
+	}
+	return b.String()
+}
+
+// visibleWidth is the terminal-column width of a colored string, ignoring escapes.
+func visibleWidth(s string) int { return displayWidth(stripANSI(s)) }
+
+// barSeg is one field of an instrument row. text is already colored and
+// rst-terminated; prio orders dropping when the row is too wide for the terminal
+// (lowest prio drops first). Use prioPinned to keep a segment at any width.
+type barSeg struct {
+	text string
+	prio int
+}
+
+const prioPinned = 1 << 20
+
+// assembleRow joins segments with the " · " separator, dropping the
+// lowest-priority optional segments until the visible width fits cols. Segments
+// are dropped whole (never cut mid-escape) and pinned segments always survive.
+// Original left-to-right order is preserved in the output.
+func assembleRow(segs []barSeg, cols int) string {
+	const sepW = 3 // visible width of " · "
+	sep := dim + " · " + rst
+	in := make([]bool, len(segs))
+	w := make([]int, len(segs))
+	for i, s := range segs {
+		in[i] = true
+		w[i] = visibleWidth(s.text)
+	}
+	width := func() int {
+		total, n := 0, 0
+		for i := range segs {
+			if in[i] {
+				total += w[i]
+				n++
+			}
+		}
+		if n > 1 {
+			total += (n - 1) * sepW
+		}
+		return total
+	}
+	for width() > cols {
+		lowest, at := prioPinned, -1
+		for i, s := range segs {
+			if in[i] && s.prio < lowest {
+				lowest, at = s.prio, i
+			}
+		}
+		if at < 0 || lowest >= prioPinned {
+			break // only pinned segments remain
+		}
+		in[at] = false
+	}
+	var parts []string
+	for i, s := range segs {
+		if in[i] {
+			parts = append(parts, s.text)
+		}
+	}
+	return strings.Join(parts, sep)
+}
+
 // pctColor returns green/yellow/red for a usage percentage.
 func pctColor(p int) string {
 	switch {

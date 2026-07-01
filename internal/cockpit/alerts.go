@@ -32,6 +32,20 @@ func (l AlertLevel) String() string {
 	}
 }
 
+// Display returns a short, non-aviation label for the status bar.
+func (l AlertLevel) Display() string {
+	switch l {
+	case AlertWarn:
+		return "high"
+	case AlertCaut:
+		return "watch"
+	case AlertAdv:
+		return "tip"
+	default:
+		return "note"
+	}
+}
+
 func alertColor(l AlertLevel) string {
 	switch l {
 	case AlertWarn:
@@ -42,6 +56,22 @@ func alertColor(l AlertLevel) string {
 		return cyan
 	default:
 		return dim
+	}
+}
+
+// reverse is the SGR for swapped fg/bg — turns a colored label into a filled chip.
+const reverse = "\033[7m"
+
+// alertChip renders the severity label so urgency reads at a glance: WARN and
+// CAUT become filled reverse-video chips (impossible to miss), while advisories
+// and memos stay as quiet colored text so they don't compete for attention.
+func alertChip(l AlertLevel) string {
+	label := l.Display()
+	switch l {
+	case AlertWarn, AlertCaut:
+		return reverse + alertColor(l) + bold + " " + label + " " + rst
+	default:
+		return alertColor(l) + label + rst
 	}
 }
 
@@ -105,6 +135,63 @@ func parseSuggestionStore(raw []string, snap cockpitSnapshot, st cockpitState) [
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].Level < out[j].Level })
 	return out
+}
+
+// partitionSuggestions splits informational notes from fixes cockpit apply can wire up.
+func partitionSuggestions(hints []classifiedSuggestion) (notes, fixes []classifiedSuggestion) {
+	for _, h := range hints {
+		if isApplyable(h) {
+			fixes = append(fixes, h)
+		} else {
+			notes = append(notes, h)
+		}
+	}
+	return notes, fixes
+}
+
+// isApplyable reports whether cockpit apply should offer this line (MCP, skills, CLAUDE.md rules).
+// Slash-command reminders and efficiency memos are shown but not numbered for apply.
+func isApplyable(c classifiedSuggestion) bool {
+	if c.Level == AlertMemo {
+		return false
+	}
+	lower := strings.ToLower(c.Text)
+	nonApply := []string{
+		"efficient", "nominal", "looks good", "already efficient",
+		"reversionary advisor", "instruments nominal",
+		"/compact", "/context", "/clear",
+		"run /model", "switch /model", "switch to a cheaper model",
+		"switch /model down", "rate limit hot", "context critical",
+		"context high — run /context", "context high — consider /compact",
+	}
+	for _, p := range nonApply {
+		if strings.Contains(lower, p) {
+			return false
+		}
+	}
+	if c.Level == AlertAdv {
+		return true
+	}
+	applySignals := []string{
+		"mcp", "skill", "graphify", "claude.md", "install", "playwright",
+		"integration", "audit ", "subagent", "/loop", ".claude",
+	}
+	for _, p := range applySignals {
+		if strings.Contains(lower, p) {
+			return true
+		}
+	}
+	return false
+}
+
+func countApplyable(hints []classifiedSuggestion) int {
+	n := 0
+	for _, h := range hints {
+		if isApplyable(h) {
+			n++
+		}
+	}
+	return n
 }
 
 // ChecklistSteps returns ECAM-style corrective actions for a warning topic.

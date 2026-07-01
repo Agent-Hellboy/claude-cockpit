@@ -38,17 +38,22 @@ func detectPhase(s Signals, prReview string) SessionPhase {
 }
 
 func (p SessionPhase) label() string {
-	switch p {
-	case PhaseEmergency:
-		return "EMER"
-	case PhasePreflight:
-		return "PREFLIGHT"
-	case PhaseApproach:
-		return "APPROACH"
-	case PhaseLanding:
-		return "LANDING"
+	return sessionPhaseDisplay(string(p))
+}
+
+// sessionPhaseDisplay maps internal phase ids to short status-bar labels.
+func sessionPhaseDisplay(phase string) string {
+	switch strings.ToLower(strings.TrimSpace(phase)) {
+	case "emergency", "emer":
+		return "hot"
+	case "preflight":
+		return "warmup"
+	case "approach":
+		return "review"
+	case "landing":
+		return "ship"
 	default:
-		return "CRUISE"
+		return "steady"
 	}
 }
 

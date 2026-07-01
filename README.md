@@ -68,15 +68,16 @@ More examples:
 
 ## Accepting suggestions (`cockpit apply`)
 
-After a few turns, the advisor writes 1–3 suggestion lines to the status bar.
-Each one is numbered so you can accept it by index:
+After a few turns, the advisor writes suggestions to the status bar.
+**Notes** (efficiency memos, slash-command reminders) are informational only.
+**Numbered fixes** can be wired into your project with `cockpit apply`:
 
 ```
-╭─ ECAM ─────────────────────────────────────────
-[1] ADV  │ 🔍 Shift exploration to graphify queries...
-[2] ADV  │ 💰 Delegate broad reads to Explore agent (Haiku)...
-[3] MEMO │ 🔄 Use `/loop` for CI polling...
-╰─ EXEC ▸ cockpit apply 1 · 2 · 3  ·  checklist <topic>
+● steady · repo ⎇main · Sonnet · ctx ██░░ 32%
++120/-40 · 5h 12% · $4.20 · advisor on
+  note  ✅ session looks efficient.
+  1 tip  🔌 Audit Playwright MCP for live browser control...
+     apply · cockpit apply 1
 ```
 
 ### List what's available
@@ -176,7 +177,7 @@ cockpit daemon start    # start it
 cockpit daemon stop     # stop it
 ```
 
-The memo row shows `daemon on` or `daemon off`.
+The memo row shows `advisor on` or `advisor off`.
 
 ### Display and FMS controls
 

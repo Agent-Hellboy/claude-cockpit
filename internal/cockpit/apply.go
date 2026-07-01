@@ -41,7 +41,7 @@ Rules:
 - Never invent API keys. If auth is required, put it in notes.
 - Be minimal: one focused change that matches the suggestion.`
 
-// RunList prints numbered suggestions from the current session report.
+// RunList prints numbered applyable fixes and unnumbered notes.
 func RunList(w io.Writer) {
 	lines := readSuggestions()
 	if len(lines) == 0 {
@@ -50,23 +50,67 @@ func RunList(w io.Writer) {
 	}
 	snap := readSnapshot()
 	st, _ := readState()
-	for i, ln := range lines {
-		c := classifySuggestion(ln, snap, st)
-		fmt.Fprintf(w, "[%d] %s %s\n", i+1, c.Level.String(), c.Text)
+	classified := parseSuggestionStore(lines, snap, st)
+	notes, fixes := partitionSuggestions(classified)
+	for i, c := range fixes {
+		fmt.Fprintf(w, "[%d] %s %s\n", i+1, c.Level.Display(), c.Text)
 	}
-	fmt.Fprintln(w, "\nApply with: cockpit apply <n>")
+	for _, c := range notes {
+		fmt.Fprintf(w, "    %s %s\n", c.Level.Display(), c.Text)
+	}
+	if len(fixes) > 0 {
+		fmt.Fprintln(w, "\nWire up a fix: cockpit apply <n>")
+	}
 }
 
-// RunApply applies suggestion n (1-based). When yes is false, prompts on stdin.
-func RunApply(n int, cwd string, yes, dryRun bool) error {
+// applyableReportLines returns suggestions cockpit apply can act on, in report order.
+func applyableReportLines() []string {
+	lines := readSuggestions()
+	snap := readSnapshot()
+	st, _ := readState()
+	var out []string
+	for _, ln := range lines {
+		if isApplyable(classifySuggestion(ln, snap, st)) {
+			out = append(out, ln)
+		}
+	}
+	return out
+}
+
+// applyableReportIndex maps apply number (1-based) to the line index in the full report.
+func applyableReportIndex(n int) (int, error) {
 	if n < 1 {
-		return fmt.Errorf("suggestion number must be >= 1")
+		return 0, fmt.Errorf("suggestion number must be >= 1")
 	}
 	lines := readSuggestions()
-	if n > len(lines) {
-		return fmt.Errorf("only %d suggestion(s) available; use cockpit list", len(lines))
+	snap := readSnapshot()
+	st, _ := readState()
+	applyN := 0
+	for i, ln := range lines {
+		if isApplyable(classifySuggestion(ln, snap, st)) {
+			applyN++
+			if applyN == n {
+				return i + 1, nil
+			}
+		}
 	}
-	suggestion := stripSeverityPrefix(lines[n-1])
+	return 0, fmt.Errorf("only %d applyable fix(es); use cockpit list", applyN)
+}
+
+// RunApply applies applyable fix n (1-based). When yes is false, prompts on stdin.
+func RunApply(n int, cwd string, yes, dryRun bool) error {
+	applyable := applyableReportLines()
+	if n > len(applyable) {
+		if len(applyable) == 0 {
+			return fmt.Errorf("no applyable fixes right now (notes and slash-command reminders are not wired via apply)")
+		}
+		return fmt.Errorf("only %d applyable fix(es); use cockpit list", len(applyable))
+	}
+	reportIdx, err := applyableReportIndex(n)
+	if err != nil {
+		return err
+	}
+	suggestion := stripSeverityPrefix(applyable[n-1])
 
 	if cwd == "" {
 		var err error
@@ -129,8 +173,8 @@ func RunApply(n int, cwd string, yes, dryRun bool) error {
 	if err := executePlan(cwd, suggestion, plan); err != nil {
 		return err
 	}
-	if err := removeSuggestion(n); err != nil {
-		debugLog("apply: remove suggestion %d: %v", n, err)
+	if err := removeSuggestion(reportIdx); err != nil {
+		debugLog("apply: remove suggestion %d: %v", reportIdx, err)
 	}
 	fmt.Println("\033[32mApplied.\033[0m Restart Claude Code or run /hooks if MCP servers were added.")
 	return nil

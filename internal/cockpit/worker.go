@@ -138,7 +138,7 @@ func RunWorker(sigPath, session string) {
 	}
 	snap := readSnapshot()
 	snap.AdvisorOK = !reversionary
-	snap.PendingSuggestions = len(classified)
+	snap.PendingSuggestions = countApplyable(classified)
 	writeSnapshot(snap)
 	logf(session, "worker: wrote %d suggestion line(s); top=%q", len(classified), classified[0].Text)
 }

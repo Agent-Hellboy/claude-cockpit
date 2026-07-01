@@ -74,6 +74,7 @@ func TestEmojiLines(t *testing.T) {
 }
 
 func TestRenderStatuslineNearFull(t *testing.T) {
+	t.Setenv("COLUMNS", "140") // full width: assert every segment renders (no responsive drop)
 	var in slInput
 	in.Model.DisplayName = "Opus 4.8 (1M context)"
 	in.Effort.Level = "high"
@@ -88,7 +89,7 @@ func TestRenderStatuslineNearFull(t *testing.T) {
 		t.Fatalf("want at least 2 rows, got %d", len(rows))
 	}
 	p := plain(rows[0])
-	for _, want := range []string{"mcp-runtime", "⎇main", "Opus 4.8 (1M context)", "high", "CTX", "99%", "985k/1.0M", "⚠ /compact"} {
+	for _, want := range []string{"mcp-runtime", "⎇main", "Opus 4.8 (1M context)", "high", "ctx", "99%", "985k/1.0M", "⚠ /compact"} {
 		if !strings.Contains(p, want) {
 			t.Errorf("row1 missing %q: %s", want, p)
 		}
@@ -124,25 +125,44 @@ func TestRenderStatuslinePRAndHint(t *testing.T) {
 	in.PR.Number = json.Number("336")
 	in.PR.ReviewState = "APPROVED"
 	rows := renderStatusline(in, []classifiedSuggestion{
+		{Level: AlertMemo, Text: "✅ session looks efficient."},
 		{Level: AlertAdv, Text: "💡 use sonnet"},
 	}, cockpitSnapshot{Phase: "cruise"}, cockpitState{})
 	if len(rows) != 6 {
-		t.Fatalf("want 6 rows (PFD×2+memo+ECAM header+hint+EXEC), got %d", len(rows))
+		t.Fatalf("want 6 rows (2 instruments+advisor header+note+fix+apply), got %d", len(rows))
 	}
-	if !strings.Contains(plain(rows[0]), "▌CRUISE▐") {
+	if !strings.Contains(plain(rows[0]), "● steady") {
 		t.Errorf("phase badge missing: %s", plain(rows[0]))
 	}
 	if !strings.Contains(plain(rows[0]), "⇡#336") {
 		t.Errorf("PR segment missing: %s", plain(rows[0]))
 	}
-	if !strings.Contains(plain(rows[3]), "ECAM") {
-		t.Errorf("ECAM header missing: %q", plain(rows[3]))
+	if !strings.Contains(plain(rows[2]), "advisor") {
+		t.Errorf("advisor section header missing: %q", plain(rows[2]))
 	}
-	if !strings.Contains(plain(rows[4]), "[1]") || !strings.Contains(plain(rows[4]), "use sonnet") {
-		t.Errorf("hint row wrong: %q", plain(rows[4]))
+	if !strings.Contains(plain(rows[3]), "note") || !strings.Contains(plain(rows[3]), "efficient") {
+		t.Errorf("note row wrong: %q", plain(rows[3]))
 	}
-	if !strings.Contains(plain(rows[5]), "EXEC") || !strings.Contains(plain(rows[5]), "cockpit apply") {
-		t.Errorf("apply footer missing: %q", plain(rows[5]))
+	if strings.Contains(plain(rows[3]), "cockpit apply") {
+		t.Errorf("note should not have apply: %q", plain(rows[3]))
+	}
+	if !strings.Contains(plain(rows[4]), "1") || !strings.Contains(plain(rows[4]), "use sonnet") {
+		t.Errorf("fix row wrong: %q", plain(rows[4]))
+	}
+	if !strings.Contains(plain(rows[5]), "cockpit apply 1") {
+		t.Errorf("apply line missing: %q", plain(rows[5]))
+	}
+}
+
+func TestIsApplyable(t *testing.T) {
+	if isApplyable(classifiedSuggestion{Level: AlertMemo, Text: "✅ session looks efficient."}) {
+		t.Fatal("memo should not be applyable")
+	}
+	if !isApplyable(classifiedSuggestion{Level: AlertAdv, Text: "🔌 Audit Playwright MCP for screenshots"}) {
+		t.Fatal("MCP tip should be applyable")
+	}
+	if isApplyable(classifiedSuggestion{Level: AlertWarn, Text: "⚠️ Context critical — run /compact"}) {
+		t.Fatal("/compact warn should not be applyable")
 	}
 }
 

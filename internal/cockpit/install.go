@@ -40,6 +40,11 @@ func Install() error {
 	if err := writeSettings(settingsPath, m); err != nil {
 		return err
 	}
+	if err := writeSlashCommand(exe); err != nil {
+		fmt.Println("Slash command: could not write /cockpit —", err)
+	} else {
+		fmt.Println("Registered /cockpit slash command (systems · status · list · apply · checklist · daemon).")
+	}
 	fmt.Printf("\033[32mInstalled.\033[0m Registered cockpit in %s\n", settingsPath)
 	fmt.Println("Restart Claude Code (or run /hooks) so the Stop hook loads. The status bar is live immediately.")
 	fmt.Println("Accept a suggestion: cockpit apply <n>  (updates CLAUDE.md, MCP, skills after you confirm)")
@@ -78,6 +83,8 @@ func Uninstall() error {
 			return err
 		}
 	}
+
+	_ = os.Remove(slashCommandPath())
 
 	// transient state
 	dir := ConfigDir()
@@ -230,4 +237,32 @@ func toList(v any) []any {
 // quote single-quotes a path for safe use in a shell command string.
 func quote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
+}
+
+func slashCommandPath() string {
+	return filepath.Join(ConfigDir(), "commands", "cockpit.md")
+}
+
+// cockpitCommandMD is the /cockpit slash-command definition. {{EXE}} is replaced
+// with the absolute, shell-quoted binary path at install time so it works under a
+// custom CLAUDE_CONFIG_DIR. The embedded shell defaults a bare /cockpit to the
+// `systems` synoptic, and passes any argument (status, list, apply <n>,
+// checklist <topic>, daemon status, debrief) straight through to the binary.
+const cockpitCommandMD = "---\n" +
+	"description: Manage claude-cockpit — synoptic, status, suggestions, apply, daemon\n" +
+	"argument-hint: \"[systems | status | list | apply <n> | checklist <topic> | plan | debrief | daemon status]\"\n" +
+	"allowed-tools: Bash\n" +
+	"---\n\n" +
+	"Run the cockpit control below, then explain the output plainly to the user:\n" +
+	"summarize what each section means, call out anything in the warning/caution\n" +
+	"colors first, and if they asked to `apply <n>` state exactly what changed.\n\n" +
+	"!`ARGS=\"$ARGUMENTS\"; {{EXE}} ${ARGS:-systems} 2>&1`\n"
+
+func writeSlashCommand(exe string) error {
+	path := slashCommandPath()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	body := strings.ReplaceAll(cockpitCommandMD, "{{EXE}}", quote(exe))
+	return os.WriteFile(path, []byte(body), 0o644)
 }

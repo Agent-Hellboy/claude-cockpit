@@ -190,29 +190,33 @@ func buildMemoLine(snap cockpitSnapshot, st cockpitState, dir string) string {
 		graph = "yes"
 	}
 	parts := []string{
-		"phase " + phaseLabel(snap.Phase),
+		sessionPhaseDisplay(snap.Phase),
 		"graphify " + graph,
 		"cost " + snap.CostIndex,
 	}
 	if snap.PendingSuggestions > 0 {
-		parts = append(parts, fmt.Sprintf("suggest %d", snap.PendingSuggestions))
+		word := "fixes"
+		if snap.PendingSuggestions == 1 {
+			word = "fix"
+		}
+		parts = append(parts, fmt.Sprintf("%d %s", snap.PendingSuggestions, word))
 	}
 	if snap.Phase == string(PhaseEmergency) {
-		parts = append(parts, "EMER")
+		parts = append(parts, "pressure")
 	}
 	if isDaemonRunning() {
-		parts = append(parts, "daemon on")
+		parts = append(parts, "advisor on")
 	} else {
-		parts = append(parts, "daemon off")
+		parts = append(parts, "advisor off")
 	}
-	return "memo: " + strings.Join(parts, " · ")
+	return strings.Join(parts, " · ")
 }
 
 func phaseLabel(p string) string {
 	if p == "" {
-		return "cruise"
+		return sessionPhaseDisplay("cruise")
 	}
-	return p
+	return sessionPhaseDisplay(p)
 }
 
 // stripSeverityPrefix returns display text for a stored suggestion line.

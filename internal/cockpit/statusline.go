@@ -87,9 +87,10 @@ func RunStatusline(r io.Reader, w io.Writer) {
 func patchSnapshotFromStatusline(in slInput) {
 	ctxPct := int(in.ContextWindow.UsedPercentage)
 	snap := readSnapshot()
+	st, _ := readState()
 	snap.ContextUsedPct = ctxPct
 	snap.Rate5hPct = int(in.RateLimits.FiveHour.UsedPercentage)
-	snap.PendingSuggestions = len(readSuggestions())
+	snap.PendingSuggestions = countApplyable(parseSuggestionStore(readSuggestions(), snap, st))
 	sig := Signals{
 		Turns:          20,
 		ContextUsedPct: ctxPct,
@@ -199,11 +200,7 @@ func renderStatusline(in slInput, hints []classifiedSuggestion, snap cockpitSnap
 		loc += " " + prColor + "⇡#" + num + rst
 	}
 
-	phase := phaseLabel(snap.Phase)
-	if phase == "" {
-		phase = "cruise"
-	}
-	phaseSeg := formatPhaseBadge(phase)
+	phaseSeg := formatPhaseBadge(snap.Phase)
 
 	modelName := in.Model.DisplayName
 	if modelName == "" {
@@ -231,37 +228,41 @@ func renderStatusline(in slInput, hints []classifiedSuggestion, snap cockpitSnap
 	costSeg := costColor(in.Cost.TotalCostUSD) + bold +
 		fmt.Sprintf("$%.2f", in.Cost.TotalCostUSD) + rst
 
-	sep := dim + " ┊ " + rst
+	notes, fixes := partitionSuggestions(hints)
 	mode := displayMode()
+	cols := termCols()
 	var rows []string
 	switch mode {
 	case "minimal":
-		rows = []string{loc + sep + modelSeg + sep + ctxSeg}
+		rows = []string{assembleRow([]barSeg{
+			{loc, prioPinned}, {modelSeg, 1}, {ctxSeg, prioPinned},
+		}, cols)}
 	default:
+		// The phase badge is a mode indicator, not a status field, so it leads the
+		// row with a plain gap rather than a "·" separator.
+		const phaseGap = "  "
+		statusCols := cols - visibleWidth(phaseSeg) - displayWidth(phaseGap)
 		rows = []string{
-			phaseSeg + loc + sep + modelSeg + sep + ctxSeg,
-			dim + "SYS " + rst + workSeg + sep + rlSeg + sep + costSeg,
+			phaseSeg + phaseGap + assembleRow([]barSeg{
+				{loc, prioPinned}, {modelSeg, 2}, {ctxSeg, prioPinned},
+			}, statusCols),
+			assembleRow([]barSeg{
+				{workSeg, 1}, {rlSeg, 2}, {costSeg, prioPinned},
+			}, cols),
+			formatAdvisorHeader(isDaemonRunning(), len(fixes)),
 		}
 	}
 
-	if mode != "minimal" {
-		memo := buildMemoLine(snap, st, dir)
-		memo = strings.TrimPrefix(memo, "memo: ")
-		rows = append(rows, dim+"▸ MEMO "+rst+dim+memo+rst)
-	}
 	if mode == "debug" && snap.ToolTop != "" {
-		rows = append(rows, dim+"▸ DBG  tools "+snap.ToolTop+rst)
+		rows = append(rows, dim+"debug · tools "+snap.ToolTop+rst)
 	}
 
-	cols := termCols()
-	if len(hints) > 0 && mode != "minimal" {
-		rows = append(rows, ecamTopRule(cols))
+	for _, n := range notes {
+		rows = append(rows, formatNoteLine(n, cols)...)
 	}
-	for i, h := range hints {
-		rows = append(rows, formatECAMMessage(i, h, cols)...)
-	}
-	if len(hints) > 0 {
-		rows = append(rows, formatApplyCTA(len(hints)))
+	for i, f := range fixes {
+		rows = append(rows, formatFixLine(i, f, cols)...)
+		rows = append(rows, formatFixApply(i+1))
 	}
 	return rows
 }
@@ -309,11 +310,11 @@ func wrapText(s string, width int) []string {
 	return lines
 }
 
-// formatPhaseBadge renders the flight-phase indicator (PFD header).
+// formatPhaseBadge renders the session-mode pill on the primary instrument row.
 func formatPhaseBadge(phase string) string {
-	label := strings.ToUpper(phaseLabel(phase))
+	label := sessionPhaseDisplay(phase)
 	col := phaseColor(phase)
-	return col + bold + "▌" + label + "▐" + rst + " "
+	return col + "● " + bold + label + rst
 }
 
 func phaseColor(phase string) string {
@@ -338,25 +339,37 @@ func formatCtxInstrument(pct int, used, total int64, warn string) string {
 	} else if pct >= 70 {
 		col = yellow
 	}
-	return dim + "CTX " + rst + col + "▕" + gauge(pct) + "▏ " +
+	return dim + "ctx " + rst + col + gauge(pct) + " " +
 		bold + col + strconv.Itoa(pct) + "%" + rst +
 		dim + " " + fmtTokens(used) + "/" + fmtTokens(total) + rst + warn
 }
 
-func ecamTopRule(cols int) string {
-	title := "ECAM"
-	dashes := cols - len(title) - 5 // "╭─ " + " ╮"
-	if dashes < 4 {
-		dashes = 4
+func formatNoteLine(h classifiedSuggestion, cols int) []string {
+	prefix := dim + "  " + rst + alertChip(h.Level) + dim + "  " + rst
+	prefixW := displayWidth("  note   ")
+	limit := cols - prefixW - 1
+	if limit < 24 {
+		limit = 24
 	}
-	return dim + "╭─ " + rst + cyan + bold + title + rst + dim + strings.Repeat("─", dashes) + "╮" + rst
+	wrapped := wrapText(h.Text, limit)
+	if len(wrapped) == 0 {
+		return nil
+	}
+	var rows []string
+	for j, ln := range wrapped {
+		if j == 0 {
+			rows = append(rows, prefix+dim+ln+rst)
+		} else {
+			rows = append(rows, dim+"     "+rst+dim+ln+rst)
+		}
+	}
+	return rows
 }
 
-func formatECAMMessage(idx int, h classifiedSuggestion, cols int) []string {
-	num := fmt.Sprintf("[%d]", idx+1)
-	lvl := h.Level.String()
-	prefix := dim + num + rst + " " + alertColor(h.Level) + bold + lvl + rst + dim + " │ " + rst
-	prefixW := displayWidth(num + " " + lvl + " │ ")
+func formatFixLine(idx int, h classifiedSuggestion, cols int) []string {
+	num := strconv.Itoa(idx + 1)
+	prefix := dim + "  " + num + " " + rst + alertChip(h.Level) + dim + "  " + rst
+	prefixW := displayWidth("  1 watch   ")
 	limit := cols - prefixW - 1
 	if limit < 24 {
 		limit = 24
@@ -367,25 +380,39 @@ func formatECAMMessage(idx int, h classifiedSuggestion, cols int) []string {
 	}
 	col := alertColor(h.Level)
 	var rows []string
+	indent := dim + "     " + rst
 	for j, ln := range wrapped {
 		if j == 0 {
 			rows = append(rows, prefix+col+ln+rst)
 		} else {
-			rows = append(rows, dim+strings.Repeat(" ", len(num)+1)+rst+dim+"│ "+rst+col+ln+rst)
+			rows = append(rows, indent+col+ln+rst)
 		}
 	}
 	return rows
 }
 
-func formatApplyCTA(count int) string {
-	var nums []string
-	for i := 1; i <= count && i <= 9; i++ {
-		nums = append(nums, cyan+bold+strconv.Itoa(i)+rst)
+// formatAdvisorHeader titles the suggestion section on its own line, so the
+// controls below read as a named block instead of trailing off the metrics row.
+// It doubles as the advisor's on/off indicator and shows how many controls are
+// ready to apply.
+func formatAdvisorHeader(on bool, applyable int) string {
+	state := green + "on" + rst
+	if !on {
+		state = yellow + "off" + rst
 	}
-	joined := strings.Join(nums, dim+" · "+rst)
-	return dim + "╰─ " + rst + green + bold + "EXEC" + rst + dim + " ▸ " + rst +
-		bold + "cockpit apply " + rst + joined +
-		dim + "  ·  checklist <topic>" + rst
+	h := magenta + bold + "▸ advisor " + rst + state
+	if applyable > 0 {
+		noun := "control"
+		if applyable > 1 {
+			noun += "s"
+		}
+		h += dim + " · " + rst + cyan + strconv.Itoa(applyable) + " " + noun + rst
+	}
+	return h
+}
+
+func formatFixApply(n int) string {
+	return dim + "     apply · " + rst + cyan + bold + "cockpit apply " + strconv.Itoa(n) + rst
 }
 
 func gitBranch(dir string) string {
