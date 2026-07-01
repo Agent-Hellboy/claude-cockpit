@@ -21,6 +21,7 @@ Think like an aircraft cockpit:
 Control logic:
 - Model control: switch down when the work no longer needs the strongest model. Use Haiku for
   read-only exploration/subagents, Sonnet for normal coding, Opus only for hard architecture/debugging.
+  Honor cost_index in SIGNALS: eco biases cheaper models, perf allows stronger models.
 - Context control: judge fill by context_used_pct (the real window is already accounted for). Only urge
   /compact when context_used_pct is high (>= ~75%); run /context when the source of bloat is unclear;
   use /clear when switching to unrelated work.
@@ -48,17 +49,20 @@ Control logic:
   If graphify_graph=no and searching is non-trivial, ask permission to run ` + "`/graphify .`" + ` and
   state est_graph_build for repo_source_files files.
 - Redundancy control: call out repeated reads/searches and suggest changing approach.
-- Phase-aware advising: like ECAM/EICAS, warn based on current session state in SIGNALS only —
-  standardized instruments and controls for every operator. Do not personalize to past sessions;
-  the pilot chooses whether to pull a lever.
+- Phase-aware advising: session_phase in SIGNALS is like ECAM flight phase — PREFLIGHT favors discovery,
+  CRUISE favors steady coding, APPROACH favors review/CI, LANDING favors wrap-up, EMER is context/rate
+  critical. Warn from current instruments only; the pilot pulls the lever.
 
 Be practical and holistic. Do not nitpick exact counts. Prefer a concrete control action over generic
 advice. Recommend by name when you can.
-Each suggestion line starts with an emoji and is one full sentence (it may be long; it will be wrapped
-for display — do not truncate it yourself). If the session is already efficient, output exactly:
-✅ session looks efficient.`
+Prefix each suggestion line with a severity tag and pipe: WARN|, CAUT|, ADV|, or MEMO| then an emoji
+and one full sentence. Examples:
+WARN|⚠️ Context at 92%% — run /context then /compact now.
+CAUT|🔍 40 searches logged — switch to graphify query.
+ADV|💰 Delegate log scanning to Explore (Haiku).
+MEMO|✅ session looks efficient.
+If the session is already efficient, output exactly: MEMO|✅ session looks efficient.`
 
-// searchInstr drives the focused, web-search-backed tool-discovery step.
 const searchInstr = `Use web search to find the single best CURRENT, well-maintained, popular open-source
 Claude Code integration for the need below: an MCP server, a Claude Code plugin, or a skill.
 Need: %s
@@ -70,8 +74,8 @@ If you cannot find a credible match, reply with an empty line.`
 
 // RunWorker reads signals for a session and writes suggestions to the report +
 // hint files. Two phases: (1) a fast local advisor; (2) only if that flags a
-// TOOLGAP, a focused web search for a concrete tool. Signals/logs are kept for
-// the session (cleaned up by RunCleanup at session end), not deleted here.
+// TOOLGAP, a focused web search for a concrete tool. Falls back to reversionary
+// rule-based hints if haiku is unavailable or returns nothing.
 func RunWorker(sigPath, session string) {
 	sig, err := os.ReadFile(sigPath)
 	if err != nil {
@@ -80,49 +84,65 @@ func RunWorker(sigPath, session string) {
 	}
 	logf(session, "worker: start (signals %d bytes)", len(sig))
 
-	// Phase 1: local advisor, no tools.
+	reversionary := false
 	out1, err := runClaude("", instr+"\n\nSIGNALS:\n"+string(sig))
 	if err != nil {
-		logf(session, "worker: phase1 claude failed: %v", err)
-		return
+		logf(session, "worker: phase1 claude failed: %v — reversionary mode", err)
+		reversionary = true
+	} else {
+		logf(session, "worker: phase1 output:\n%s", strings.TrimSpace(out1))
 	}
-	logf(session, "worker: phase1 output:\n%s", strings.TrimSpace(out1))
 
-	lines := emojiLines(out1, 3)
-	gap := extractToolGap(out1)
+	var classified []classifiedSuggestion
+	if reversionary {
+		classified = ruleBasedSuggestions(string(sig))
+	} else {
+		lines := advisorLines(out1, 3)
+		gap := extractToolGap(out1)
 
-	// Phase 2: only when a tool gap was flagged.
-	if gap != "" {
-		logf(session, "worker: tool gap detected: %q -> web search", gap)
-		out2, err := runClaude("WebSearch", fmt.Sprintf(searchInstr, gap))
-		if err != nil {
-			logf(session, "worker: phase2 search failed: %v", err)
-		} else {
-			logf(session, "worker: phase2 search output:\n%s", strings.TrimSpace(out2))
-			if tool := emojiLines(out2, 1); len(tool) > 0 {
-				lines = append(lines, tool[0])
-				if len(lines) > 4 {
-					lines = lines[:4]
+		if gap != "" {
+			logf(session, "worker: tool gap detected: %q -> web search", gap)
+			out2, err := runClaude("WebSearch", fmt.Sprintf(searchInstr, gap))
+			if err != nil {
+				logf(session, "worker: phase2 search failed: %v", err)
+			} else {
+				logf(session, "worker: phase2 search output:\n%s", strings.TrimSpace(out2))
+				if tool := emojiLines(out2, 1); len(tool) > 0 {
+					lines = append(lines, tool[0])
+					if len(lines) > 4 {
+						lines = lines[:4]
+					}
 				}
+			}
+		}
+
+		if len(lines) == 0 {
+			logf(session, "worker: no suggestion lines — reversionary mode")
+			classified = ruleBasedSuggestions(string(sig))
+		} else {
+			snap := readSnapshot()
+			st, _ := readState()
+			classified = make([]classifiedSuggestion, 0, len(lines))
+			for _, ln := range lines {
+				classified = append(classified, classifySuggestion(ln, snap, st))
 			}
 		}
 	}
 
-	if len(lines) == 0 {
+	if len(classified) == 0 {
 		logf(session, "worker: no suggestion lines produced")
 		return
 	}
-	if err := os.WriteFile(reportFile(), []byte(strings.Join(lines, "\n")+"\n"), 0o644); err != nil {
+	if err := writeSuggestionReport(classified); err != nil {
 		logf(session, "worker: write report: %v", err)
 	}
-	if err := os.WriteFile(hintFile(), []byte(lines[0]), 0o644); err != nil {
-		logf(session, "worker: write hint: %v", err)
-	}
-	logf(session, "worker: wrote %d suggestion line(s); hint=%q", len(lines), lines[0])
+	snap := readSnapshot()
+	snap.AdvisorOK = !reversionary
+	snap.PendingSuggestions = len(classified)
+	writeSnapshot(snap)
+	logf(session, "worker: wrote %d suggestion line(s); top=%q", len(classified), classified[0].Text)
 }
 
-// runClaude runs `claude -p --model haiku` with the prompt on stdin (the arg
-// form clashes with --allowedTools). allowTools is a space-separated list or "".
 func runClaude(allowTools, prompt string) (string, error) {
 	args := []string{"-p", "--model", "haiku"}
 	if allowTools != "" {

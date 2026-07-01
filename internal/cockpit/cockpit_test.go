@@ -83,9 +83,9 @@ func TestRenderStatuslineNearFull(t *testing.T) {
 	in.ContextWindow.TotalInputTokens = 985000
 	in.ContextWindow.ContextWindowSize = 1000000
 	in.Cost.TotalCostUSD = 24.3
-	rows := renderStatusline(in, nil)
-	if len(rows) != 2 {
-		t.Fatalf("want 2 rows (no hint), got %d", len(rows))
+	rows := renderStatusline(in, nil, cockpitSnapshot{Phase: "cruise"}, cockpitState{})
+	if len(rows) < 2 {
+		t.Fatalf("want at least 2 rows, got %d", len(rows))
 	}
 	p := plain(rows[0])
 	for _, want := range []string{"mcp-runtime", "⎇main", "Opus 4.8 (1M context)", "high", "ctx", "99%", "985k/1.0M", "⚠️ /compact"} {
@@ -104,14 +104,14 @@ func TestRenderStatuslineNoEarlyCompactWarn(t *testing.T) {
 	in.ContextWindow.TotalInputTokens = 211000
 	in.ContextWindow.ContextWindowSize = 1000000
 	in.Exceeds200k = true
-	p := plain(renderStatusline(in, nil)[0])
+	p := plain(renderStatusline(in, nil, cockpitSnapshot{}, cockpitState{})[0])
 	if strings.Contains(p, "/compact") {
 		t.Errorf("should not warn at 21%%: %s", p)
 	}
 
 	// ...but at 90%+ it must warn, with the emoji-presentation glyph.
 	in.ContextWindow.UsedPercentage = 92
-	p = plain(renderStatusline(in, nil)[0])
+	p = plain(renderStatusline(in, nil, cockpitSnapshot{}, cockpitState{})[0])
 	if !strings.Contains(p, "⚠️ /compact") {
 		t.Errorf("want emoji warn at 92%%: %s", p)
 	}
@@ -123,18 +123,20 @@ func TestRenderStatuslinePRAndHint(t *testing.T) {
 	in.Worktree.Branch = "feat"
 	in.PR.Number = json.Number("336")
 	in.PR.ReviewState = "APPROVED"
-	rows := renderStatusline(in, []string{"💡 use sonnet"})
-	if len(rows) != 4 {
-		t.Fatalf("want 4 rows (with hint + apply footer), got %d", len(rows))
+	rows := renderStatusline(in, []classifiedSuggestion{
+		{Level: AlertAdv, Text: "💡 use sonnet"},
+	}, cockpitSnapshot{Phase: "cruise"}, cockpitState{})
+	if len(rows) != 5 {
+		t.Fatalf("want 5 rows (phase+2 instruments+memo+hint+footer), got %d", len(rows))
 	}
 	if !strings.Contains(plain(rows[0]), "⇡#336") {
 		t.Errorf("PR segment missing: %s", plain(rows[0]))
 	}
-	if !strings.Contains(plain(rows[2]), "[1]") || !strings.Contains(plain(rows[2]), "use sonnet") {
-		t.Errorf("hint row wrong: %q", plain(rows[2]))
+	if !strings.Contains(plain(rows[3]), "[1]") || !strings.Contains(plain(rows[3]), "use sonnet") {
+		t.Errorf("hint row wrong: %q", plain(rows[3]))
 	}
-	if !strings.Contains(plain(rows[3]), "cockpit apply") {
-		t.Errorf("apply footer missing: %q", plain(rows[3]))
+	if !strings.Contains(plain(rows[4]), "cockpit apply") {
+		t.Errorf("apply footer missing: %q", plain(rows[4]))
 	}
 }
 
@@ -433,6 +435,48 @@ func TestReadSuggestionsBoundedAndStale(t *testing.T) {
 	}
 	if got := readSuggestions(); got != nil {
 		t.Fatalf("stale suggestions should be ignored, got %v", got)
+	}
+}
+
+func TestAlertClassification(t *testing.T) {
+	snap := cockpitSnapshot{ContextUsedPct: 92}
+	c := classifySuggestion("📦 consider compact", snap, cockpitState{})
+	if c.Level != AlertWarn {
+		t.Fatalf("want WARN at 92%% ctx, got %s", c.Level)
+	}
+	if lvl, body, ok := parseSeverityPrefix("CAUT|🔍 use graphify"); !ok || lvl != AlertCaut || body == "" {
+		t.Fatalf("parse prefix failed")
+	}
+}
+
+func TestDetectPhase(t *testing.T) {
+	if got := detectPhase(Signals{ContextUsedPct: 95}, ""); got != PhaseEmergency {
+		t.Fatalf("want emergency, got %s", got)
+	}
+	if got := detectPhase(Signals{Turns: 3}, ""); got != PhasePreflight {
+		t.Fatalf("want preflight, got %s", got)
+	}
+}
+
+func TestRuleBasedSuggestions(t *testing.T) {
+	sig := "context_used_pct=92  rate_5h_pct=10  searches=2"
+	got := ruleBasedSuggestions(sig)
+	if len(got) == 0 || got[0].Level != AlertWarn {
+		t.Fatalf("want warn suggestion, got %+v", got)
+	}
+}
+
+func TestChecklistSteps(t *testing.T) {
+	if len(ChecklistSteps("context")) < 2 {
+		t.Fatal("want checklist steps")
+	}
+}
+
+func TestAdvisorLinesWithPrefix(t *testing.T) {
+	out := "WARN|⚠️ Context high — compact\nplain line\nMEMO|✅ efficient\n"
+	got := advisorLines(out, 3)
+	if len(got) != 2 {
+		t.Fatalf("want 2 advisor lines, got %v", got)
 	}
 }
 

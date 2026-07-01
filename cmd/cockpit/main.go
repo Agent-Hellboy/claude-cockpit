@@ -8,6 +8,11 @@
 //	cockpit uninstall    # remove cockpit settings and transient state
 //	cockpit list         # show numbered suggestions
 //	cockpit apply N      # accept suggestion N — updates CLAUDE.md, MCP, skills
+//	cockpit systems      # ECAM synoptic of hooks, MCP, skills, graphify
+//	cockpit checklist T  # ECAM procedure for a topic (context, budget, search)
+//	cockpit plan         # FMS-style session route and deviation
+//	cockpit status       # ECAM STATUS deferred items
+//	cockpit debrief      # post-session black-box summary
 //	cockpit worker FILE  # internal: detached background classifier (not for direct use)
 //	cockpit version      # print version
 package main
@@ -26,7 +31,7 @@ var version = "dev"
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: cockpit {statusline|analyze|install|uninstall|list|apply|worker|version}")
+		fmt.Fprintln(os.Stderr, "usage: cockpit {statusline|analyze|install|uninstall|list|apply|systems|checklist|plan|status|debrief|worker|version}")
 		os.Exit(2)
 	}
 	switch os.Args[1] {
@@ -56,6 +61,32 @@ func main() {
 			fmt.Fprintln(os.Stderr, "apply failed:", err)
 			os.Exit(1)
 		}
+	case "systems":
+		cwd, _ := os.Getwd()
+		if len(os.Args) > 2 {
+			cwd = os.Args[2]
+		}
+		cockpit.RunSystems(os.Stdout, cwd)
+	case "checklist":
+		topic := "general"
+		if len(os.Args) > 2 {
+			topic = os.Args[2]
+		}
+		cockpit.RunChecklist(os.Stdout, topic)
+	case "plan":
+		cockpit.RunPlan(os.Stdout)
+	case "status":
+		cwd, _ := os.Getwd()
+		if len(os.Args) > 2 {
+			cwd = os.Args[2]
+		}
+		cockpit.RunStatus(os.Stdout, cwd)
+	case "debrief":
+		session := ""
+		if len(os.Args) > 2 {
+			session = os.Args[2]
+		}
+		cockpit.RunDebrief(os.Stdout, session)
 	case "worker":
 		if len(os.Args) < 4 {
 			os.Exit(0)

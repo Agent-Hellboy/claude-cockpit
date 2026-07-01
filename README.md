@@ -138,6 +138,31 @@ claude-cockpit works the same way:
 Nothing auto-adapts to your history. The bar shows instruments and the next
 control worth considering **right now**; you decide whether to act.
 
+### ECAM/EICAS features
+
+| Aviation | claude-cockpit |
+|---|---|
+| Alert levels (WARN / CAUT / ADV / MEMO) | Color-coded suggestion rows |
+| Flight phase (PREFLIGHT → LANDING) | `session_phase` in advisor signals + status bar |
+| MEMO line | Dim row: phase, graphify, cost index, pending suggestions |
+| ECAM checklist | `cockpit checklist <topic>` |
+| System synoptic | `cockpit systems` |
+| FMS flight plan | `cockpit plan` |
+| STATUS page | `cockpit status` |
+| Black-box debrief | `cockpit debrief` (+ auto on session end in logs) |
+| Reversionary mode | Rule-based hints if haiku advisor fails |
+| Attention getter | `COCKPIT_ALERT_CHIME=1` — terminal bell when ctx crosses 90% |
+
+### Display and FMS controls
+
+| Variable | Effect |
+|---|---|
+| `COCKPIT_DISPLAY=minimal` | Row 1 instruments only |
+| `COCKPIT_DISPLAY=full` | Default — instruments + memo + suggestions |
+| `COCKPIT_DISPLAY=debug` | Full + tool histogram row |
+| `COCKPIT_COST_INDEX=eco\|normal\|perf` | FMS cost index — biases model suggestions |
+| `COCKPIT_ALERT_CHIME=1` | Bell when context hits WARN threshold |
+
 ## Commands
 
 | Command | Purpose |
@@ -149,6 +174,11 @@ control worth considering **right now**; you decide whether to act.
 | `cockpit list` | Show numbered suggestions |
 | `cockpit apply N` | Accept suggestion N — updates `CLAUDE.md`, MCP, skills (with confirmation) |
 | `cockpit apply N --dry-run` | Preview what `apply` would do |
+| `cockpit systems` | ECAM synoptic — hooks, MCP, skills, graphify |
+| `cockpit checklist <topic>` | ECAM procedure (`context`, `budget`, `search`, …) |
+| `cockpit plan` | FMS session route, cost index, deviation |
+| `cockpit status` | ECAM STATUS — deferred items |
+| `cockpit debrief [session]` | Post-session black-box summary |
 | `cockpit version` | Print the installed version |
 
 Uninstall:
@@ -170,6 +200,9 @@ Useful environment variables:
 | `COCKPIT_ANALYZE_DISABLE=1` | Disable advisor analysis; keep the status line |
 | `COCKPIT_ANALYZE_PROMPTS=0` | Omit recent prompt text from analyzer signals |
 | `COCKPIT_DEBUG=1` | Write debug logs to `~/.claude/.cockpit-debug.log` |
+| `COCKPIT_DISPLAY` | `minimal`, `full` (default), or `debug` |
+| `COCKPIT_COST_INDEX` | `eco`, `normal` (default), or `perf` — FMS cost bias |
+| `COCKPIT_ALERT_CHIME=1` | Terminal bell when context crosses 90% |
 | `CLAUDE_CONFIG_DIR` | Use a different Claude config directory |
 | `COCKPIT_VERSION` | Pin installer downloads to a release tag |
 

@@ -167,3 +167,31 @@ func emojiLines(out string, max int) []string {
 	}
 	return res
 }
+
+// advisorLines keeps emoji-led suggestion lines, allowing an optional WARN|/CAUT| prefix.
+func advisorLines(out string, max int) []string {
+	var res []string
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.ReplaceAll(line, "**", "")
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "TOOLGAP:") {
+			continue
+		}
+		body := line
+		if _, b, ok := parseSeverityPrefix(line); ok {
+			body = b
+		}
+		r, _ := utf8.DecodeRuneInString(body)
+		if r == utf8.RuneError || r < 0x80 {
+			continue
+		}
+		if strings.HasSuffix(body, ":") {
+			continue
+		}
+		res = append(res, line)
+		if len(res) >= max {
+			break
+		}
+	}
+	return res
+}

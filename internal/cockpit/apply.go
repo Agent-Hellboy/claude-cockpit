@@ -48,8 +48,11 @@ func RunList(w io.Writer) {
 		fmt.Fprintln(w, "No cockpit suggestions right now.")
 		return
 	}
+	snap := readSnapshot()
+	st, _ := readState()
 	for i, ln := range lines {
-		fmt.Fprintf(w, "[%d] %s\n", i+1, ln)
+		c := classifySuggestion(ln, snap, st)
+		fmt.Fprintf(w, "[%d] %s %s\n", i+1, c.Level.String(), c.Text)
 	}
 	fmt.Fprintln(w, "\nApply with: cockpit apply <n>")
 }
@@ -63,7 +66,7 @@ func RunApply(n int, cwd string, yes, dryRun bool) error {
 	if n > len(lines) {
 		return fmt.Errorf("only %d suggestion(s) available; use cockpit list", len(lines))
 	}
-	suggestion := lines[n-1]
+	suggestion := stripSeverityPrefix(lines[n-1])
 
 	if cwd == "" {
 		var err error

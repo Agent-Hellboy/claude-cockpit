@@ -79,6 +79,8 @@ func Uninstall() error {
 	_ = os.Remove(filepath.Join(dir, ".session-report"))
 	_ = os.Remove(filepath.Join(dir, ".cockpit-learning.json"))
 	_ = os.Remove(filepath.Join(dir, ".cockpit-pending.json"))
+	_ = os.Remove(filepath.Join(dir, ".cockpit-snapshot"))
+	_ = os.Remove(filepath.Join(dir, ".cockpit-chime-state"))
 	if entries, err := os.ReadDir(dir); err == nil {
 		for _, e := range entries {
 			if len(e.Name()) > 10 && e.Name()[:10] == ".sa-count-" {

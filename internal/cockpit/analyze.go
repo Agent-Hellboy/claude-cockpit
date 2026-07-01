@@ -133,8 +133,9 @@ func RunAnalyze(r io.Reader) {
 	}
 	logf(in.SessionID, "analyze: turn %d (cadence k=%d) — run", n, k)
 
-	signals := formatSignals(collectSignals(in, n))
-	spawnWorker(signals, in.SessionID)
+	sig := collectSignals(in, n)
+	writeSnapshot(buildSnapshot(sig, ""))
+	spawnWorker(formatSignals(sig), in.SessionID)
 }
 
 func gatherSignals(in stopInput, turns int) string {
@@ -269,6 +270,7 @@ func formatSignals(s Signals) string {
 	}
 	return fmt.Sprintf(`turns=%d  model=%s  approx_context_tokens=%d  context_window=%d  context_used_pct=%d (%s)
 cost_usd=%.2f  rate_5h_pct=%d  rate_7d_pct=%d
+session_phase=%s  cost_index=%s
 tool_histogram: %s
 searches=%d  files_reread_3x+=%d
 graphify_graph=%s  repo_source_files=%s  est_graph_build=%s
@@ -279,6 +281,7 @@ available_plugins: %s
 recent_prompts: %s`,
 		s.Turns, fallback(s.Model, "?"), s.ApproxContextTokens, s.ContextWindow, s.ContextUsedPct, fallback(s.ContextSource, "inferred"),
 		s.CostUSD, s.Rate5hPct, s.Rate7dPct,
+		detectPhase(s, "").label(), costIndex(),
 		histString(s.ToolHistogram), s.Searches, s.FilesReread3x,
 		graph, s.RepoSourceFiles, s.EstGraphBuild,
 		s.AvailableSkills,
@@ -587,14 +590,24 @@ func RunCleanup(r io.Reader) {
 		return
 	}
 	logf(in.SessionID, "cleanup: session ended — removing transient artifacts")
+	writeDebriefNote(in.SessionID)
 	for _, p := range []string{
 		sessionSignalsFile(in.SessionID),
 		filepath.Join(ConfigDir(), ".sa-count-"+sessionKey(in.SessionID)),
-		hintFile(), reportFile(), stateFile(),
+		hintFile(), reportFile(), stateFile(), snapshotFile(), chimeStateFile(),
 	} {
 		_ = os.Remove(p)
 	}
 	// Keep the .log itself as the durable record; the user can prune cockpit-logs.
+}
+
+func writeDebriefNote(session string) {
+	if session == "" {
+		return
+	}
+	var b strings.Builder
+	RunDebrief(&b, session)
+	logf(session, "debrief:\n%s", strings.TrimSpace(b.String()))
 }
 
 func fileExists(p string) bool {

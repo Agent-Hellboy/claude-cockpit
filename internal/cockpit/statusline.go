@@ -65,14 +65,41 @@ func RunStatusline(r io.Reader, w io.Writer) {
 	data, _ := io.ReadAll(r)
 	var in slInput
 	_ = json.Unmarshal(data, &in)
-	writeState(in) // bridge the authoritative context/cost/rate data to the analyzer
+	writeState(in)
+	patchSnapshotFromStatusline(in)
+	chime := maybeChime(int(in.ContextWindow.UsedPercentage))
+	snap := readSnapshot()
+	st, _ := readState()
+	hints := readSuggestions()
+	classified := parseSuggestionStore(hints, snap, st)
 	if os.Getenv("COCKPIT_DEBUG") != "" {
 		_ = os.WriteFile(filepath.Join(ConfigDir(), ".cockpit-cols"),
 			[]byte(fmt.Sprintf("COLUMNS=%q -> termCols=%d\n", os.Getenv("COLUMNS"), termCols())), 0o644)
 	}
-	for _, line := range renderStatusline(in, readSuggestions()) {
+	if chime != "" {
+		fmt.Fprint(w, chime)
+	}
+	for _, line := range renderStatusline(in, classified, snap, st) {
 		fmt.Fprintln(w, line)
 	}
+}
+
+func patchSnapshotFromStatusline(in slInput) {
+	ctxPct := int(in.ContextWindow.UsedPercentage)
+	snap := readSnapshot()
+	snap.ContextUsedPct = ctxPct
+	snap.Rate5hPct = int(in.RateLimits.FiveHour.UsedPercentage)
+	snap.PendingSuggestions = len(readSuggestions())
+	sig := Signals{
+		Turns:          20,
+		ContextUsedPct: ctxPct,
+		Rate5hPct:      snap.Rate5hPct,
+		Rate7dPct:      int(in.RateLimits.SevenDay.UsedPercentage),
+		Searches:       snap.Searches,
+		GraphifyGraph:  snap.GraphifyGraph,
+	}
+	snap.Phase = string(detectPhase(sig, in.PR.ReviewState))
+	writeSnapshot(snap)
 }
 
 // writeState persists the real context window, fill %, cost, and rate-limit
@@ -133,9 +160,8 @@ func readLinesBounded(path string) []string {
 }
 
 // renderStatusline builds the rows. Pure (no IO) so it is unit-testable; the
-// git fallback only runs when the worktree branch is absent. Each suggestion in
-// hints becomes one or more wrapped rows below the two instrument rows.
-func renderStatusline(in slInput, hints []string) []string {
+// git fallback only runs when the worktree branch is absent.
+func renderStatusline(in slInput, hints []classifiedSuggestion, snap cockpitSnapshot, st cockpitState) []string {
 	dir := in.Workspace.CurrentDir
 	if dir == "" {
 		dir = in.Cwd
@@ -144,18 +170,13 @@ func renderStatusline(in slInput, hints []string) []string {
 		dir = "."
 	}
 
-	// Gauge color/warning is driven purely by how full the window actually is.
-	// (exceeds_200k_tokens is NOT used here: on a 1M window it goes true at ~20%,
-	// which would fire the /compact cue 70 points too early.)
 	ctxPct := int(in.ContextWindow.UsedPercentage)
 	ctxColor, warn := green, ""
 	if ctxPct >= 90 {
-		// U+FE0F forces emoji (not text) presentation of the warning sign.
 		ctxColor, warn = red, " "+red+bold+"⚠️ /compact"+rst
 	} else if ctxPct >= 70 {
 		ctxColor = yellow
 	}
-	// dim "ctx" label, colored gauge, bold colored %, dim token detail.
 	ctxSeg := dim + "ctx " + rst + ctxColor + gauge(ctxPct) + " " +
 		bold + ctxColor + strconv.Itoa(ctxPct) + "%" + rst +
 		" " + dim + fmtTokens(in.ContextWindow.TotalInputTokens) + "/" +
@@ -182,7 +203,12 @@ func renderStatusline(in slInput, hints []string) []string {
 		loc += " " + prColor + "⇡#" + num + rst
 	}
 
-	// Model name pops (bold blue); the "(1M context)" parenthetical stays dim.
+	phase := phaseLabel(snap.Phase)
+	if phase == "" {
+		phase = "cruise"
+	}
+	phaseSeg := dim + strings.ToUpper(phase) + rst
+
 	modelName := in.Model.DisplayName
 	if modelName == "" {
 		modelName = "claude"
@@ -195,45 +221,57 @@ func renderStatusline(in slInput, hints []string) []string {
 		modelSeg += " " + dim + in.Effort.Level + rst
 	}
 
-	// Row 2: bright values, dim labels — readable, not all-gray.
 	churnSeg := green + "+" + strconv.FormatInt(in.Cost.TotalLinesAdded, 10) + rst +
 		dim + "/" + rst + red + "-" + strconv.FormatInt(in.Cost.TotalLinesRemoved, 10) + rst
 	tokSeg := dim + "out " + rst + fmtTokens(in.ContextWindow.TotalOutputTokens) +
 		dim + " · cache " + rst + fmtTokens(in.ContextWindow.CurrentUsage.CacheReadInputTokens)
 	workSeg := churnSeg + dim + " · " + rst + tokSeg
 
-	// Each rate-limit window is colored independently so a hot 5h doesn't paint 7d red.
 	fiveH := int(in.RateLimits.FiveHour.UsedPercentage)
 	sevenD := int(in.RateLimits.SevenDay.UsedPercentage)
 	rlSeg := dim + "5h " + rst + pctColor(fiveH) + bold + strconv.Itoa(fiveH) + "%" + rst +
 		dim + " · 7d " + rst + pctColor(sevenD) + bold + strconv.Itoa(sevenD) + "%" + rst
 
-	// Cost colored by magnitude so a high bill is obvious at a glance.
 	costSeg := costColor(in.Cost.TotalCostUSD) + bold +
 		fmt.Sprintf("$%.2f", in.Cost.TotalCostUSD) + rst
 
 	sep := dim + " │ " + rst
-	rows := []string{
-		loc + sep + modelSeg + sep + ctxSeg,
-		workSeg + sep + rlSeg + sep + costSeg,
+	mode := displayMode()
+	var rows []string
+	switch mode {
+	case "minimal":
+		rows = []string{loc + sep + modelSeg + sep + ctxSeg}
+	default:
+		rows = []string{
+			phaseSeg + " " + loc + sep + modelSeg + sep + ctxSeg,
+			workSeg + sep + rlSeg + sep + costSeg,
+		}
 	}
-	// Each suggestion wraps across as many rows as needed so full sentences show
-	// instead of being truncated with "…".
+
+	if mode != "minimal" {
+		rows = append(rows, dim+buildMemoLine(snap, st, dir)+rst)
+	}
+	if mode == "debug" && snap.ToolTop != "" {
+		rows = append(rows, dim+"debug: tools "+snap.ToolTop+rst)
+	}
+
 	cols := termCols()
 	for i, h := range hints {
-		num := fmt.Sprintf("[%d] ", i+1)
-		wrapped := wrapText(num+h, cols)
+		tag := fmt.Sprintf("[%d] %s ", i+1, h.Level.String())
+		body := h.Text
+		col := alertColor(h.Level)
+		wrapped := wrapText(tag+body, cols)
 		for j, ln := range wrapped {
 			if j == 0 {
-				body := strings.TrimPrefix(ln, num)
-				rows = append(rows, dim+num+rst+yellow+body+rst)
+				ln = strings.TrimPrefix(ln, tag)
+				rows = append(rows, dim+tag+rst+col+ln+rst)
 			} else {
-				rows = append(rows, dim+"    "+rst+yellow+ln+rst)
+				rows = append(rows, dim+"      "+rst+col+ln+rst)
 			}
 		}
 	}
 	if len(hints) > 0 {
-		rows = append(rows, dim+"apply: cockpit apply <n>"+rst)
+		rows = append(rows, dim+"apply: cockpit apply <n>  ·  cockpit checklist <topic>"+rst)
 	}
 	return rows
 }
