@@ -4,8 +4,9 @@ Live instruments and control suggestions for long-running Claude Code sessions.
 
 `claude-cockpit` adds a compact status line to Claude Code and uses the `Stop`
 hook to suggest the next useful control before a session gets expensive,
-repetitive, or hard to steer. It does not automate your session or change your
-settings without you.
+repetitive, or hard to steer. Suggestions are advisory — you choose whether to
+pull the lever. When you accept one, `cockpit apply` can wire it into your
+project (`CLAUDE.md`, MCP, skills) after you confirm.
 
 ![claude-cockpit status line](docs/statusline.png)
 
@@ -15,9 +16,8 @@ settings without you.
   usage, and session cost while you work.
 - Get timely suggestions for `/compact`, `/clear`, model changes, skills,
   subagents, MCP, graphify, or workflow tools.
-- Keep suggestions advisory and reversible: cockpit shows the control, you choose
-  whether to use it. Numbered suggestions can be accepted with `cockpit apply <n>`,
-  which updates `CLAUDE.md` and can install MCP servers or skills after you confirm.
+- Accept a suggestion in one step: numbered rows in the status bar map to
+  `cockpit apply <n>`, which updates project config only after you say yes.
 - Install one small binary with no Go, jq, or runtime dependency.
 
 ## Install
@@ -66,6 +66,60 @@ More examples:
 ![model downgrade suggestion](docs/bar-model.png)
 ![skill suggestion](docs/bar-skill.png)
 
+## Accepting suggestions (`cockpit apply`)
+
+After a few turns, the advisor writes 1–3 suggestion lines to the status bar.
+Each one is numbered so you can accept it by index:
+
+```
+[1] 🔍 Shift exploration to graphify queries — try `graphify query "<question>"`...
+[2] 💰 Delegate broad reads to Explore agent (Haiku) — cheaper, keeps context lean...
+[3] 🔄 Use `/loop` for CI polling — e.g. `/loop 2m gh run view 12345 --json conclusion`
+apply: cockpit apply <n>
+```
+
+### List what's available
+
+```bash
+cockpit list
+```
+
+### Apply a suggestion
+
+```bash
+cockpit apply 1          # accept suggestion [1]
+cockpit apply 2 --yes    # skip the confirmation prompt
+cockpit apply 3 --dry-run  # preview the plan only
+```
+
+You can also ask Claude in your session: *"run `cockpit apply 1`"* — same command.
+
+### What happens when you accept
+
+1. Cockpit reads the suggestion and your recent session signals.
+2. A focused `haiku` pass turns it into a concrete plan.
+3. You see every change and get `Apply this fix? [y/N]:` (unless `--yes`).
+4. On confirm, cockpit may:
+   - **Append a rule to `CLAUDE.md`** — workflow levers like graphify, `/loop`,
+     Explore subagent, model tiering (idempotent; won't duplicate the same rule).
+   - **Merge MCP servers into `.mcp.json`** — when the suggestion needs an
+     integration (e.g. Playwright, GitHub, Postgres).
+   - **Write a project skill** — `.claude/skills/<name>/SKILL.md` when a skill
+     should exist locally.
+   - **Run safe install commands** — `brew`, `npm`, `npx -y`, etc. (no secrets,
+     no destructive flags).
+5. The applied suggestion is removed from the status bar.
+
+Restart Claude Code or run `/hooks` after MCP servers are added so they load.
+
+### Flags
+
+| Flag | Effect |
+|---|---|
+| `--yes` | Apply without prompting |
+| `--dry-run` | Show the plan, make no changes |
+| `--cwd DIR` | Target a project directory (default: current dir) |
+
 ## Commands
 
 | Command | Purpose |
@@ -76,6 +130,7 @@ More examples:
 | `cockpit analyze` | Run the `Stop` hook analyzer |
 | `cockpit list` | Show numbered suggestions |
 | `cockpit apply N` | Accept suggestion N — updates `CLAUDE.md`, MCP, skills (with confirmation) |
+| `cockpit apply N --dry-run` | Preview what `apply` would do |
 | `cockpit version` | Print the installed version |
 
 Uninstall:
