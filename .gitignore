@@ -9,3 +9,6 @@
 .sa-count-*
 *.bak
 *.bak.*
+
+# generated at release time from CHANGELOG.md
+RELEASE_NOTES.md

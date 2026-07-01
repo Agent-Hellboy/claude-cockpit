@@ -1,0 +1,49 @@
+# Changelog
+
+All notable changes to claude-cockpit are documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+The section for each released version is used verbatim as the GitHub release
+notes, so keep entries user-facing and concise. Add new work under
+`[Unreleased]`; on release, rename it to the version with a date.
+
+## [Unreleased]
+
+## [0.1.6] - 2026-07-01
+
+### Added
+- **`/cockpit` slash command** to manage cockpit from inside Claude Code. Bare
+  `/cockpit` shows the systems synoptic; arguments pass straight through —
+  `status`, `list`, `apply <n>`, `checklist <topic>`, `plan`, `debrief`,
+  `daemon status`. `cockpit install` writes it to
+  `~/.claude/commands/cockpit.md` (with the absolute binary path baked in so it
+  works under a custom `CLAUDE_CONFIG_DIR`); `cockpit uninstall` removes it.
+- **Named advisor section.** Suggestions now sit under a titled
+  `▸ advisor on · N controls` header on its own line, instead of trailing off
+  the end of the metrics row.
+- **Session phase badge** (`● steady / review / ship / hot / warmup`) leads the
+  top row, showing where the session is at a glance.
+- **Severity chips.** Warning and caution suggestions render as filled
+  reverse-video chips so urgent controls stand out; advisories and memos stay
+  quiet.
+
+### Changed
+- **Width-aware status bar.** Instrument segments now drop by priority to fit the
+  terminal width, with location, context %, and cost always pinned. Rows no
+  longer overflow and wrap into the suggestion lines on narrow terminals.
+- The phase badge leads with a plain gap (`● steady  repo …`) rather than a `·`
+  separator, so it reads as a mode header rather than a peer field.
+
+### Fixed
+- The metrics row could soft-wrap on narrow terminals and visually collide with
+  the advisor suggestions rendered below it.
+
+## [0.1.5] and earlier
+
+See the [GitHub releases](https://github.com/Agent-Hellboy/claude-cockpit/releases)
+page for notes on releases prior to the introduction of this changelog.
+
+[Unreleased]: https://github.com/Agent-Hellboy/claude-cockpit/compare/v0.1.6...HEAD
+[0.1.6]: https://github.com/Agent-Hellboy/claude-cockpit/compare/v0.1.5...v0.1.6
