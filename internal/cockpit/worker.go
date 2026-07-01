@@ -48,10 +48,10 @@ Control logic:
   If graphify_graph=no and searching is non-trivial, ask permission to run ` + "`/graphify .`" + ` and
   state est_graph_build for repo_source_files files.
 - Redundancy control: call out repeated reads/searches and suggest changing approach.
-- Learning control: USER_PREFERENCES in SIGNALS reflects what this operator accepts over time
-  (applied levers, explicit prefer/avoid). Prioritize categories they apply often; respect explicit
-  avoid unless a gauge is critical (e.g. context >= 90%%). Do not repeat levers they recently applied
-  unless the session clearly regressed.
+- Learning control: USER_PREFERENCES in SIGNALS is learned automatically — observed_levers (what they
+  do), accepted_levers (cockpit apply), ignored_levers (suggestions they skip). Prioritize observed
+  and accepted categories; de-emphasize ignored ones unless a gauge is critical (e.g. context >= 90%%).
+  Do not repeat recently applied levers unless the session clearly regressed.
 
 Be practical and holistic. Do not nitpick exact counts. Prefer a concrete control action over generic
 advice. Recommend by name when you can.
@@ -113,6 +113,7 @@ func RunWorker(sigPath, session string) {
 		logf(session, "worker: no suggestion lines produced")
 		return
 	}
+	rotatePendingSuggestions(lines)
 	if err := os.WriteFile(reportFile(), []byte(strings.Join(lines, "\n")+"\n"), 0o644); err != nil {
 		logf(session, "worker: write report: %v", err)
 	}

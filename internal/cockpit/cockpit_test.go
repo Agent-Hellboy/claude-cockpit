@@ -497,30 +497,41 @@ func TestRemoveSuggestion(t *testing.T) {
 	}
 }
 
-func TestLearningRecordAndSignals(t *testing.T) {
+func TestLearningAutomatic(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("CLAUDE_CONFIG_DIR", dir)
 
 	if got := categorizeSuggestion("🔍 Shift exploration to graphify queries"); got != "graphify" {
 		t.Fatalf("category=%q want graphify", got)
 	}
-	if got := categorizeSuggestion("💰 Delegate broad reads to Explore agent"); got != "delegation" {
-		t.Fatalf("category=%q want delegation", got)
+	if got := observeUserText("/model sonnet"); got[0] != "model" {
+		t.Fatalf("observe user=%v", got)
+	}
+	if got := observeCommand("graphify query \"where is main\""); got[0] != "graphify" {
+		t.Fatalf("observe cmd=%v", got)
 	}
 
 	recordApplied("🔍 use graphify query first", "/tmp/my-project")
-	recordApplied("💰 Delegate to Explore agent", "/tmp/my-project")
-
 	sig := formatLearningForSignals()
-	if !strings.Contains(sig, "graphify:1") || !strings.Contains(sig, "delegation:1") {
-		t.Fatalf("signals missing counts: %q", sig)
+	if !strings.Contains(sig, "accepted_levers=graphify:1") {
+		t.Fatalf("signals missing accepted: %q", sig)
 	}
 
-	if err := SetPrefer("mcp", "avoid"); err != nil {
-		t.Fatal(err)
-	}
+	rotatePendingSuggestions([]string{"💰 delegate to Explore"})
+	rotatePendingSuggestions([]string{"🔄 use /loop for CI"})
 	sig = formatLearningForSignals()
-	if !strings.Contains(sig, "mcp:avoid") {
-		t.Fatalf("explicit pref missing: %q", sig)
+	if !strings.Contains(sig, "ignored_levers=delegation:1") {
+		t.Fatalf("signals missing ignored: %q", sig)
+	}
+
+	// transcript learning
+	tp := filepath.Join(dir, "t.jsonl")
+	os.WriteFile(tp, []byte(
+		`{"message":{"role":"assistant","content":[{"type":"tool_use","name":"Bash","input":{"command":"graphify query \"auth\""}}]}}`+"\n",
+	), 0o644)
+	LearnFromSession(tp, "sess-1", dir)
+	sig = formatLearningForSignals()
+	if !strings.Contains(sig, "observed_levers=graphify:1") {
+		t.Fatalf("signals missing observed: %q", sig)
 	}
 }

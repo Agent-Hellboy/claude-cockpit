@@ -36,8 +36,10 @@ type contentItem struct {
 	Text  string `json:"text"`
 	Name  string `json:"name"`
 	Input struct {
-		Command  string `json:"command"`
-		FilePath string `json:"file_path"`
+		Command      string `json:"command"`
+		FilePath     string `json:"file_path"`
+		SubagentType string `json:"subagent_type"`
+		Description  string `json:"description"`
 	} `json:"input"`
 }
 
@@ -131,6 +133,7 @@ func RunAnalyze(r io.Reader) {
 	}
 	logf(in.SessionID, "analyze: turn %d (cadence k=%d) — run", n, k)
 
+	LearnFromSession(in.TranscriptPath, in.SessionID, in.Cwd)
 	signals := formatSignals(collectSignals(in, n))
 	spawnWorker(signals, in.SessionID)
 }
@@ -587,6 +590,9 @@ func RunCleanup(r io.Reader) {
 		return
 	}
 	logf(in.SessionID, "cleanup: session ended — removing transient artifacts")
+	LearnFromSession(in.TranscriptPath, in.SessionID, in.Cwd)
+	flushPendingSuggestions()
+	clearSessionCursor(in.SessionID)
 	for _, p := range []string{
 		sessionSignalsFile(in.SessionID),
 		filepath.Join(ConfigDir(), ".sa-count-"+sessionKey(in.SessionID)),

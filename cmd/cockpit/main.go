@@ -8,8 +8,7 @@
 //	cockpit uninstall    # remove cockpit settings and transient state
 //	cockpit list         # show numbered suggestions
 //	cockpit apply N      # accept suggestion N — updates CLAUDE.md, MCP, skills
-//	cockpit prefs        # show learned operator preferences
-//	cockpit prefer CAT   # explicitly prefer or avoid a lever category
+//	cockpit prefs        # show automatically learned operator preferences
 //	cockpit worker FILE  # internal: detached background classifier (not for direct use)
 //	cockpit version      # print version
 package main
@@ -28,7 +27,7 @@ var version = "dev"
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: cockpit {statusline|analyze|install|uninstall|list|apply|prefs|prefer|worker|version}")
+		fmt.Fprintln(os.Stderr, "usage: cockpit {statusline|analyze|install|uninstall|list|apply|prefs|worker|version}")
 		os.Exit(2)
 	}
 	switch os.Args[1] {
@@ -40,37 +39,6 @@ func main() {
 		cockpit.RunList(os.Stdout)
 	case "prefs", "learning":
 		cockpit.RunPrefs(os.Stdout)
-	case "prefer":
-		if len(os.Args) < 3 {
-			fmt.Fprintln(os.Stderr, "usage: cockpit prefer <category> [--avoid] | cockpit prefer --clear <category>")
-			os.Exit(2)
-		}
-		if os.Args[2] == "--clear" {
-			if len(os.Args) < 4 {
-				fmt.Fprintln(os.Stderr, "usage: cockpit prefer --clear <category>")
-				os.Exit(2)
-			}
-			if err := cockpit.ClearPrefer(os.Args[3]); err != nil {
-				fmt.Fprintln(os.Stderr, "prefer:", err)
-				os.Exit(1)
-			}
-			fmt.Println("Cleared explicit preference for", os.Args[3])
-			break
-		}
-		avoid := false
-		cat := os.Args[2]
-		if len(os.Args) > 3 && os.Args[3] == "--avoid" {
-			avoid = true
-		}
-		mode := "prefer"
-		if avoid {
-			mode = "avoid"
-		}
-		if err := cockpit.SetPrefer(cat, mode); err != nil {
-			fmt.Fprintln(os.Stderr, "prefer:", err)
-			os.Exit(1)
-		}
-		fmt.Printf("Will %s %s suggestions in future advisor runs.\n", mode, cat)
 	case "apply":
 		fs := flag.NewFlagSet("apply", flag.ExitOnError)
 		yes := fs.Bool("yes", false, "apply without confirmation prompt")
