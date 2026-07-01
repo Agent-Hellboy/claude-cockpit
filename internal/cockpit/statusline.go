@@ -220,10 +220,20 @@ func renderStatusline(in slInput, hints []string) []string {
 	// Each suggestion wraps across as many rows as needed so full sentences show
 	// instead of being truncated with "…".
 	cols := termCols()
-	for _, h := range hints {
-		for _, ln := range wrapText(h, cols) {
-			rows = append(rows, yellow+ln+rst)
+	for i, h := range hints {
+		num := fmt.Sprintf("[%d] ", i+1)
+		wrapped := wrapText(num+h, cols)
+		for j, ln := range wrapped {
+			if j == 0 {
+				body := strings.TrimPrefix(ln, num)
+				rows = append(rows, dim+num+rst+yellow+body+rst)
+			} else {
+				rows = append(rows, dim+"    "+rst+yellow+ln+rst)
+			}
 		}
+	}
+	if len(hints) > 0 {
+		rows = append(rows, dim+"apply: cockpit apply <n>"+rst)
 	}
 	return rows
 }

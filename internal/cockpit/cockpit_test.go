@@ -124,14 +124,17 @@ func TestRenderStatuslinePRAndHint(t *testing.T) {
 	in.PR.Number = json.Number("336")
 	in.PR.ReviewState = "APPROVED"
 	rows := renderStatusline(in, []string{"💡 use sonnet"})
-	if len(rows) != 3 {
-		t.Fatalf("want 3 rows (with hint), got %d", len(rows))
+	if len(rows) != 4 {
+		t.Fatalf("want 4 rows (with hint + apply footer), got %d", len(rows))
 	}
 	if !strings.Contains(plain(rows[0]), "⇡#336") {
 		t.Errorf("PR segment missing: %s", plain(rows[0]))
 	}
-	if plain(rows[2]) != "💡 use sonnet" {
+	if !strings.Contains(plain(rows[2]), "[1]") || !strings.Contains(plain(rows[2]), "use sonnet") {
 		t.Errorf("hint row wrong: %q", plain(rows[2]))
+	}
+	if !strings.Contains(plain(rows[3]), "cockpit apply") {
+		t.Errorf("apply footer missing: %q", plain(rows[3]))
 	}
 }
 
@@ -430,5 +433,66 @@ func TestReadSuggestionsBoundedAndStale(t *testing.T) {
 	}
 	if got := readSuggestions(); got != nil {
 		t.Fatalf("stale suggestions should be ignored, got %v", got)
+	}
+}
+
+func TestParseApplyPlan(t *testing.T) {
+	out := `Here is the plan:
+{"summary":"use graphify","claude_md_section":"## Graphify\n- run graphify query","mcp_servers":{},"shell_commands":[]}`
+	plan, err := parseApplyPlan(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Summary != "use graphify" || !strings.Contains(plan.ClaudeMDSection, "Graphify") {
+		t.Fatalf("unexpected plan: %+v", plan)
+	}
+}
+
+func TestAppendClaudeMD(t *testing.T) {
+	dir := t.TempDir()
+	marker := suggestionMarker("🔍 use graphify")
+	if err := appendClaudeMD(dir, "## Graphify\n- query first", marker); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := os.ReadFile(filepath.Join(dir, "CLAUDE.md"))
+	if !strings.Contains(string(b), "Graphify") {
+		t.Fatalf("missing section: %s", b)
+	}
+	// idempotent
+	if err := appendClaudeMD(dir, "## Graphify\n- query first", marker); err != nil {
+		t.Fatal(err)
+	}
+	b2, _ := os.ReadFile(filepath.Join(dir, "CLAUDE.md"))
+	if strings.Count(string(b2), "Graphify") != 1 {
+		t.Fatalf("duplicate append: %s", b2)
+	}
+}
+
+func TestMergeMCPServers(t *testing.T) {
+	dir := t.TempDir()
+	if err := mergeMCPServers(dir, map[string]any{
+		"playwright": map[string]any{"command": "npx", "args": []any{"-y", "@playwright/mcp"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := os.ReadFile(filepath.Join(dir, ".mcp.json"))
+	if !strings.Contains(string(b), "playwright") {
+		t.Fatalf("mcp not written: %s", b)
+	}
+}
+
+func TestRemoveSuggestion(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", dir)
+	report := "🔍 one\n💰 two\n🔄 three\n"
+	os.WriteFile(reportFile(), []byte(report), 0o644)
+	os.WriteFile(hintFile(), []byte("🔍 one"), 0o644)
+
+	if err := removeSuggestion(2); err != nil {
+		t.Fatal(err)
+	}
+	got := readSuggestions()
+	if len(got) != 2 || got[0] != "🔍 one" || got[1] != "🔄 three" {
+		t.Fatalf("after remove: %v", got)
 	}
 }

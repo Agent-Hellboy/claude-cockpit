@@ -42,6 +42,7 @@ func Install() error {
 	}
 	fmt.Printf("\033[32mInstalled.\033[0m Registered cockpit in %s\n", settingsPath)
 	fmt.Println("Restart Claude Code (or run /hooks) so the Stop hook loads. The status bar is live immediately.")
+	fmt.Println("Accept a suggestion: cockpit apply <n>  (updates CLAUDE.md, MCP, skills after you confirm)")
 	return nil
 }
 
