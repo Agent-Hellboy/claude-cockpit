@@ -16,7 +16,8 @@ settings without you.
 - Get timely suggestions for `/compact`, `/clear`, model changes, skills,
   subagents, MCP, graphify, or workflow tools.
 - Keep suggestions advisory and reversible: cockpit shows the control, you choose
-  whether to use it.
+  whether to use it. Numbered suggestions can be accepted with `cockpit apply <n>`,
+  which updates `CLAUDE.md` and can install MCP servers or skills after you confirm.
 - Install one small binary with no Go, jq, or runtime dependency.
 
 ## Install
@@ -73,6 +74,8 @@ More examples:
 | `cockpit uninstall` | Remove cockpit settings and transient state |
 | `cockpit statusline` | Render the Claude Code status line |
 | `cockpit analyze` | Run the `Stop` hook analyzer |
+| `cockpit list` | Show numbered suggestions |
+| `cockpit apply N` | Accept suggestion N — updates `CLAUDE.md`, MCP, skills (with confirmation) |
 | `cockpit version` | Print the installed version |
 
 Uninstall:
