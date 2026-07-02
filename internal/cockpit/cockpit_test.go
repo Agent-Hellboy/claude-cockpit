@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -367,10 +368,10 @@ func TestGatherSignalsAndCadence(t *testing.T) {
 	if got := bumpCounter("c1"); got != 2 {
 		t.Errorf("second bump=%d want 2", got)
 	}
-	if _, err := os.Stat(filepath.Join(dir, ".sa-count-c1")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(dir, "cockpit-logs", ".sa-count-c1")); !os.IsNotExist(err) {
 		t.Fatalf("raw session id should not be used as filename")
 	}
-	if matches, _ := filepath.Glob(filepath.Join(dir, ".sa-count-*")); len(matches) != 1 {
+	if matches, _ := filepath.Glob(filepath.Join(dir, "cockpit-logs", ".sa-count-*")); len(matches) != 1 {
 		t.Fatalf("want one hashed counter file, got %v", matches)
 	}
 }
@@ -571,6 +572,153 @@ func TestMergeMCPServers(t *testing.T) {
 	b, _ := os.ReadFile(filepath.Join(dir, ".mcp.json"))
 	if !strings.Contains(string(b), "playwright") {
 		t.Fatalf("mcp not written: %s", b)
+	}
+}
+
+func TestAnalyzeCadence(t *testing.T) {
+	if got := analyzeCadence(1); got != 10 {
+		t.Errorf("analyzeCadence(1)=%d want 10 (default)", got)
+	}
+	if got := analyzeCadence(12); got != 5 {
+		t.Errorf("analyzeCadence(12)=%d want 5", got)
+	}
+	if got := analyzeCadence(30); got != 2 {
+		t.Errorf("analyzeCadence(30)=%d want 2", got)
+	}
+	t.Setenv("COCKPIT_ANALYZE_CADENCE", "7")
+	if got := analyzeCadence(1); got != 7 {
+		t.Errorf("env override ignored: got %d want 7", got)
+	}
+}
+
+// Regression: a short session (fewer than 10 turns) must still get advice —
+// previously the advisor only fired on n%10==0, so it never fired at all.
+func TestRunAnalyzeFiresEarlyInShortSession(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", dir)
+	// Pretend the advisor daemon is already running (our own pid, which is
+	// alive) so RunAnalyze enqueues a job instead of spawning a real worker
+	// that would shell out to `claude`.
+	if err := os.WriteFile(daemonPIDFile(), []byte(strconv.Itoa(os.Getpid())), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	tp := filepath.Join(dir, "t.jsonl")
+	if err := os.WriteFile(tp, []byte(`{"message":{"role":"user","content":"hello"}}`+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	in := stopInput{TranscriptPath: tp, SessionID: "short-session"}
+	b, _ := json.Marshal(in)
+
+	for i := 0; i < 3; i++ {
+		RunAnalyze(bytes.NewReader(b))
+	}
+	jobs, _ := filepath.Glob(filepath.Join(jobDir(), "*.job"))
+	if len(jobs) != 3 {
+		t.Fatalf("want 3 queued jobs from the first 3 turns of a short session, got %d", len(jobs))
+	}
+
+	// Turn 4: past the early-fire window, default cadence k=10, 4%%10 != 0 -> throttled.
+	RunAnalyze(bytes.NewReader(b))
+	jobs, _ = filepath.Glob(filepath.Join(jobDir(), "*.job"))
+	if len(jobs) != 3 {
+		t.Fatalf("turn 4 should be throttled, got %d jobs", len(jobs))
+	}
+}
+
+// Regression: a payload with a real context/cost snapshot but no rate_limits
+// block (indistinguishable from a real 0%) must not erase previously known
+// good 5h/7d values, and a momentarily-zero context window must not block
+// persisting rate-limit data.
+func TestWriteStatePersistsRateLimitsWithZeroContext(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", dir)
+
+	var sl slInput
+	sl.RateLimits.FiveHour.UsedPercentage = 53
+	sl.RateLimits.SevenDay.UsedPercentage = 9
+	writeState(sl) // ContextWindowSize is 0 here
+
+	st, ok := readState()
+	if !ok || st.FiveH != 53 || st.SevenD != 9 {
+		t.Fatalf("rate limits not persisted with zero context: ok=%v st=%+v", ok, st)
+	}
+
+	var sl2 slInput
+	sl2.ContextWindow.ContextWindowSize = 200000
+	sl2.ContextWindow.UsedPercentage = 40
+	writeState(sl2) // no rate_limits block in this payload
+
+	st, _ = readState()
+	if st.FiveH != 53 || st.SevenD != 9 {
+		t.Fatalf("rate limits clobbered by a payload without rate_limits: %+v", st)
+	}
+	if st.CtxSize != 200000 || st.CtxPct != 40 {
+		t.Fatalf("context not updated: %+v", st)
+	}
+}
+
+// Acceptance: state with 53/9 plus a payload without rate_limits must render
+// "5h 53% · 7d 9%" instead of falling back to 0%.
+func TestRenderStatuslineRateLimitFallback(t *testing.T) {
+	var in slInput
+	in.Workspace.CurrentDir = "/x/repo"
+	st := cockpitState{FiveH: 53, SevenD: 9}
+	rows := renderStatusline(in, nil, cockpitSnapshot{}, st)
+	p := plain(rows[1])
+	if !strings.Contains(p, "53%") || !strings.Contains(p, "9%") {
+		t.Fatalf("want 5h 53%% . 7d 9%% fallback from state, got: %s", p)
+	}
+}
+
+func TestRunCleanupPreservesCrossSessionState(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", dir)
+
+	os.WriteFile(stateFile(), []byte(`{"five_h":53,"seven_d":9}`), 0o644)
+	os.WriteFile(snapshotFile(), []byte(`{"phase":"cruise"}`), 0o644)
+	os.WriteFile(hintFile(), []byte("hint"), 0o644)
+	os.WriteFile(reportFile(), []byte("report"), 0o644)
+	bumpCounter("clean-session")
+
+	in := stopInput{SessionID: "clean-session"}
+	b, _ := json.Marshal(in)
+	RunCleanup(bytes.NewReader(b))
+
+	if _, err := os.Stat(stateFile()); err != nil {
+		t.Errorf("stateFile should survive SessionEnd: %v", err)
+	}
+	if _, err := os.Stat(snapshotFile()); err != nil {
+		t.Errorf("snapshotFile should survive SessionEnd: %v", err)
+	}
+	if _, err := os.Stat(hintFile()); !os.IsNotExist(err) {
+		t.Errorf("hintFile should be removed at SessionEnd")
+	}
+	if _, err := os.Stat(reportFile()); !os.IsNotExist(err) {
+		t.Errorf("reportFile should be removed at SessionEnd")
+	}
+	if matches, _ := filepath.Glob(filepath.Join(cockpitDir(), ".sa-count-*")); len(matches) != 0 {
+		t.Errorf("session counter should be removed, got %v", matches)
+	}
+}
+
+func TestCockpitDirConsolidatesState(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", dir)
+	logsDir := filepath.Join(dir, "cockpit-logs")
+
+	paths := map[string]string{
+		"stateFile": stateFile(), "snapshotFile": snapshotFile(), "chimeStateFile": chimeStateFile(),
+		"hintFile": hintFile(), "reportFile": reportFile(), "debugFile": debugFile(),
+		"jobDir": jobDir(), "daemonPIDFile": daemonPIDFile(), "daemonLogFile": daemonLogFile(),
+	}
+	for name, got := range paths {
+		if !strings.HasPrefix(got, logsDir) {
+			t.Errorf("%s = %q, want under %q", name, got, logsDir)
+		}
+	}
+	if _, err := os.Stat(logsDir); err != nil {
+		t.Errorf("cockpitDir() should create the directory: %v", err)
 	}
 }
 

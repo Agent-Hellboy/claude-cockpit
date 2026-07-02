@@ -15,6 +15,7 @@ type cockpitSnapshot struct {
 	CostIndex          string `json:"cost_index"`
 	ContextUsedPct     int    `json:"context_used_pct"`
 	Rate5hPct          int    `json:"rate_5h_pct"`
+	Rate7dPct          int    `json:"rate_7d_pct"`
 	Searches           int    `json:"searches"`
 	GraphifyGraph      bool   `json:"graphify_graph"`
 	ToolTop            string `json:"tool_top"`
@@ -24,8 +25,8 @@ type cockpitSnapshot struct {
 	AdvisorOK          bool   `json:"advisor_ok"`
 }
 
-func snapshotFile() string   { return filepath.Join(ConfigDir(), ".cockpit-snapshot") }
-func chimeStateFile() string { return filepath.Join(ConfigDir(), ".cockpit-chime-state") }
+func snapshotFile() string   { return filepath.Join(cockpitDir(), ".cockpit-snapshot") }
+func chimeStateFile() string { return filepath.Join(cockpitDir(), ".cockpit-chime-state") }
 
 func writeSnapshot(s cockpitSnapshot) {
 	b, err := json.Marshal(s)
@@ -58,6 +59,7 @@ func buildSnapshot(s Signals, prReview string) cockpitSnapshot {
 		CostIndex:          costIndex(),
 		ContextUsedPct:     s.ContextUsedPct,
 		Rate5hPct:          s.Rate5hPct,
+		Rate7dPct:          s.Rate7dPct,
 		Searches:           s.Searches,
 		GraphifyGraph:      s.GraphifyGraph,
 		ToolTop:            topTools(s.ToolHistogram, 3),

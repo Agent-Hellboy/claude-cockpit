@@ -86,14 +86,16 @@ func Uninstall() error {
 
 	_ = os.Remove(slashCommandPath())
 
-	// transient state
-	dir := ConfigDir()
+	// transient state, consolidated under cockpitDir()
+	dir := cockpitDir()
 	_ = os.Remove(filepath.Join(dir, ".model-hint"))
 	_ = os.Remove(filepath.Join(dir, ".session-report"))
 	_ = os.Remove(filepath.Join(dir, ".cockpit-learning.json"))
 	_ = os.Remove(filepath.Join(dir, ".cockpit-pending.json"))
+	_ = os.Remove(filepath.Join(dir, ".cockpit-state"))
 	_ = os.Remove(filepath.Join(dir, ".cockpit-snapshot"))
 	_ = os.Remove(filepath.Join(dir, ".cockpit-chime-state"))
+	_ = os.Remove(filepath.Join(dir, ".cockpit-debug.log"))
 	_ = os.Remove(filepath.Join(dir, ".cockpit-daemon.pid"))
 	_ = os.Remove(filepath.Join(dir, ".cockpit-daemon.log"))
 	_ = os.RemoveAll(filepath.Join(dir, "cockpit-jobs"))

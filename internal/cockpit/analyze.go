@@ -119,14 +119,8 @@ func RunAnalyze(r io.Reader) {
 	}
 
 	n := bumpCounter(in.SessionID)
-	k := 10
-	switch {
-	case n >= 25:
-		k = 2
-	case n >= 10:
-		k = 5
-	}
-	if n%k != 0 {
+	k := analyzeCadence(n)
+	if n > 3 && n%k != 0 {
 		logf(in.SessionID, "analyze: turn %d (cadence k=%d) — skip", n, k)
 		return
 	}
@@ -135,6 +129,25 @@ func RunAnalyze(r io.Reader) {
 	sig := collectSignals(in, n)
 	writeSnapshot(buildSnapshot(sig, ""))
 	spawnWorker(formatSignals(sig), in.SessionID)
+}
+
+// analyzeCadence returns how many turns should elapse between advisor runs once
+// the early-fire window (n <= 3) has passed. COCKPIT_ANALYZE_CADENCE overrides
+// the default schedule outright; otherwise cadence tightens as the session goes on.
+func analyzeCadence(n int) int {
+	if v := os.Getenv("COCKPIT_ANALYZE_CADENCE"); v != "" {
+		if k, err := strconv.Atoi(v); err == nil && k > 0 {
+			return k
+		}
+	}
+	switch {
+	case n >= 25:
+		return 2
+	case n >= 10:
+		return 5
+	default:
+		return 10
+	}
 }
 
 func gatherSignals(in stopInput, turns int) string {
@@ -532,7 +545,7 @@ func bumpCounter(sid string) int {
 	if sid == "" {
 		sid = "x"
 	}
-	p := filepath.Join(ConfigDir(), ".sa-count-"+sessionKey(sid))
+	p := filepath.Join(cockpitDir(), ".sa-count-"+sessionKey(sid))
 	n := 0
 	if b, err := os.ReadFile(p); err == nil {
 		n, _ = strconv.Atoi(strings.TrimSpace(string(b)))
@@ -564,10 +577,13 @@ func RunCleanup(r io.Reader) {
 	}
 	logf(in.SessionID, "cleanup: session ended — removing transient artifacts")
 	writeDebriefNote(in.SessionID)
+	// stateFile and snapshotFile hold cross-session rate-limit/context metadata
+	// (5h/7d, last-known context %) — a new session needs those immediately, so
+	// they survive SessionEnd and are only ever overwritten, never deleted here.
 	for _, p := range []string{
 		sessionSignalsFile(in.SessionID),
-		filepath.Join(ConfigDir(), ".sa-count-"+sessionKey(in.SessionID)),
-		hintFile(), reportFile(), stateFile(), snapshotFile(), chimeStateFile(),
+		filepath.Join(cockpitDir(), ".sa-count-"+sessionKey(in.SessionID)),
+		hintFile(), reportFile(), chimeStateFile(),
 	} {
 		_ = os.Remove(p)
 	}

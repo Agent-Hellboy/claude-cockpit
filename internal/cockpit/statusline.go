@@ -89,13 +89,22 @@ func patchSnapshotFromStatusline(in slInput) {
 	snap := readSnapshot()
 	st, _ := readState()
 	snap.ContextUsedPct = ctxPct
-	snap.Rate5hPct = int(in.RateLimits.FiveHour.UsedPercentage)
+	fiveH := int(in.RateLimits.FiveHour.UsedPercentage)
+	if fiveH == 0 {
+		fiveH = st.FiveH
+	}
+	sevenD := int(in.RateLimits.SevenDay.UsedPercentage)
+	if sevenD == 0 {
+		sevenD = st.SevenD
+	}
+	snap.Rate5hPct = fiveH
+	snap.Rate7dPct = sevenD
 	snap.PendingSuggestions = countApplyable(parseSuggestionStore(readSuggestions(), snap, st))
 	sig := Signals{
 		Turns:          20,
 		ContextUsedPct: ctxPct,
-		Rate5hPct:      snap.Rate5hPct,
-		Rate7dPct:      int(in.RateLimits.SevenDay.UsedPercentage),
+		Rate5hPct:      fiveH,
+		Rate7dPct:      sevenD,
 		Searches:       snap.Searches,
 		GraphifyGraph:  snap.GraphifyGraph,
 	}
@@ -104,20 +113,25 @@ func patchSnapshotFromStatusline(in slInput) {
 }
 
 // writeState persists the real context window, fill %, cost, and rate-limit
-// pressure that Claude Code provides here, for the analyzer to consume. Only
-// written when the window size is known, so a render without context data does
-// not clobber a good snapshot. Best-effort.
+// pressure that Claude Code provides here, for the analyzer (and a future
+// session's statusline) to consume. Merges onto the existing state rather than
+// overwriting wholesale, so a render that is momentarily missing context data
+// (window size 0) or rate-limit data (payload has no rate_limits block, which
+// is indistinguishable from a real 0%) still persists whichever fields it does
+// have instead of clobbering good stored values. Best-effort.
 func writeState(in slInput) {
-	if in.ContextWindow.ContextWindowSize <= 0 {
-		return
+	st, _ := readState()
+	if in.ContextWindow.ContextWindowSize > 0 {
+		st.CtxSize = in.ContextWindow.ContextWindowSize
+		st.CtxPct = int(in.ContextWindow.UsedPercentage)
+		st.CtxTokens = in.ContextWindow.TotalInputTokens
+		st.Cost = in.Cost.TotalCostUSD
 	}
-	st := cockpitState{
-		CtxSize:   in.ContextWindow.ContextWindowSize,
-		CtxPct:    int(in.ContextWindow.UsedPercentage),
-		CtxTokens: in.ContextWindow.TotalInputTokens,
-		Cost:      in.Cost.TotalCostUSD,
-		FiveH:     int(in.RateLimits.FiveHour.UsedPercentage),
-		SevenD:    int(in.RateLimits.SevenDay.UsedPercentage),
+	if v := int(in.RateLimits.FiveHour.UsedPercentage); v > 0 {
+		st.FiveH = v
+	}
+	if v := int(in.RateLimits.SevenDay.UsedPercentage); v > 0 {
+		st.SevenD = v
 	}
 	if b, err := json.Marshal(st); err == nil {
 		_ = os.WriteFile(stateFile(), b, 0o644)
@@ -221,7 +235,13 @@ func renderStatusline(in slInput, hints []classifiedSuggestion, snap cockpitSnap
 	workSeg := churnSeg + dim + " · " + rst + tokSeg
 
 	fiveH := int(in.RateLimits.FiveHour.UsedPercentage)
+	if fiveH == 0 {
+		fiveH = st.FiveH
+	}
 	sevenD := int(in.RateLimits.SevenDay.UsedPercentage)
+	if sevenD == 0 {
+		sevenD = st.SevenD
+	}
 	rlSeg := dim + "5h " + rst + pctColor(fiveH) + bold + strconv.Itoa(fiveH) + "%" + rst +
 		dim + " · 7d " + rst + pctColor(sevenD) + bold + strconv.Itoa(sevenD) + "%" + rst
 

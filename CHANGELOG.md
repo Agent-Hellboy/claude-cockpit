@@ -11,6 +11,31 @@ notes, so keep entries user-facing and concise. Add new work under
 
 ## [Unreleased]
 
+## [0.1.7] - 2026-07-02
+
+### Fixed
+- **Advisor never fired in short sessions.** The Stop-hook analyzer only ran on
+  `turn % 10 == 0`, and the per-session turn counter resets every session — so
+  a session under 10 turns never got a suggestion. It now fires on turns 1-3
+  and then throttles by cadence. Added `COCKPIT_ANALYZE_CADENCE` to override
+  the throttle explicitly.
+- **5h/7d rate limits showed 0% on a fresh session.** The status bar only read
+  `rate_limits` from the live payload, ignoring the persisted state — so a
+  render where that block was momentarily absent showed 0% instead of the
+  last-known value. It now falls back to the stored 5h/7d. Relatedly,
+  `SessionEnd` was deleting `.cockpit-state`/`.cockpit-snapshot` (the
+  cross-session rate/context memory) on every session end; those now survive,
+  and `writeState` persists rate-limit data even when the context window size
+  is momentarily 0.
+- **Installer left a stale advisor daemon running after an upgrade.**
+  `install.sh` now stops any running daemon before replacing the binary (a
+  running daemon holds the old binary's code in memory) and verifies the
+  downloaded tarball against `checksums.txt`.
+
+### Changed
+- All cockpit state, logs, and job files now live under
+  `~/.claude/cockpit-logs/` instead of loose dotfiles in `~/.claude/`.
+
 ## [0.1.6] - 2026-07-01
 
 ### Added
@@ -45,5 +70,6 @@ notes, so keep entries user-facing and concise. Add new work under
 See the [GitHub releases](https://github.com/Agent-Hellboy/claude-cockpit/releases)
 page for notes on releases prior to the introduction of this changelog.
 
-[Unreleased]: https://github.com/Agent-Hellboy/claude-cockpit/compare/v0.1.6...HEAD
+[Unreleased]: https://github.com/Agent-Hellboy/claude-cockpit/compare/v0.1.7...HEAD
+[0.1.7]: https://github.com/Agent-Hellboy/claude-cockpit/compare/v0.1.6...v0.1.7
 [0.1.6]: https://github.com/Agent-Hellboy/claude-cockpit/compare/v0.1.5...v0.1.6

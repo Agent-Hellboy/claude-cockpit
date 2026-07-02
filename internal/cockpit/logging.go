@@ -13,7 +13,7 @@ import (
 // suggested) and removed only when the session ends (see RunCleanup), not the
 // moment a worker reads them.
 
-func logDir() string { return filepath.Join(ConfigDir(), "cockpit-logs") }
+func logDir() string { return cockpitDir() }
 
 var nonword = regexp.MustCompile(`[^A-Za-z0-9_.-]`)
 

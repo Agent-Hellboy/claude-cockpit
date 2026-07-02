@@ -36,21 +36,31 @@ func ConfigDir() string {
 	return filepath.Join(home, ".claude")
 }
 
-func hintFile() string   { return filepath.Join(ConfigDir(), ".model-hint") }
-func reportFile() string { return filepath.Join(ConfigDir(), ".session-report") }
-func debugFile() string  { return filepath.Join(ConfigDir(), ".cockpit-debug.log") }
+// cockpitDir is where all cockpit state, logs, and job artifacts live, keeping
+// ~/.claude itself uncluttered. Honors CLAUDE_CONFIG_DIR via ConfigDir().
+func cockpitDir() string {
+	d := filepath.Join(ConfigDir(), "cockpit-logs")
+	_ = os.MkdirAll(d, 0o755)
+	return d
+}
+
+func hintFile() string   { return filepath.Join(cockpitDir(), ".model-hint") }
+func reportFile() string { return filepath.Join(cockpitDir(), ".session-report") }
+func debugFile() string  { return filepath.Join(cockpitDir(), ".cockpit-debug.log") }
 
 // stateFile holds the authoritative context/cost/rate snapshot the status line
 // receives from Claude Code, so the Stop-hook analyzer (which is not given that
 // data) can read the real context window instead of guessing from the model name.
-func stateFile() string { return filepath.Join(ConfigDir(), ".cockpit-state") }
+// It survives SessionEnd (see RunCleanup) so a new session shows last-known
+// 5h/7d/context immediately instead of resetting to 0.
+func stateFile() string { return filepath.Join(cockpitDir(), ".cockpit-state") }
 
 func debugLog(format string, args ...any) {
 	if os.Getenv("COCKPIT_DEBUG") != "1" {
 		return
 	}
 	msg := fmt.Sprintf("%s "+format+"\n", append([]any{time.Now().Format(time.RFC3339)}, args...)...)
-	_ = os.MkdirAll(ConfigDir(), 0o755)
+	_ = os.MkdirAll(cockpitDir(), 0o755)
 	f, err := os.OpenFile(debugFile(), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
 		return

@@ -22,9 +22,9 @@ type advisorJob struct {
 	SignalsPath string `json:"signals_path"`
 }
 
-func daemonPIDFile() string { return filepath.Join(ConfigDir(), ".cockpit-daemon.pid") }
-func daemonLogFile() string { return filepath.Join(ConfigDir(), ".cockpit-daemon.log") }
-func jobDir() string        { return filepath.Join(ConfigDir(), "cockpit-jobs") }
+func daemonPIDFile() string { return filepath.Join(cockpitDir(), ".cockpit-daemon.pid") }
+func daemonLogFile() string { return filepath.Join(cockpitDir(), ".cockpit-daemon.log") }
+func jobDir() string        { return filepath.Join(cockpitDir(), "cockpit-jobs") }
 
 func isDaemonRunning() bool {
 	b, err := os.ReadFile(daemonPIDFile())
@@ -116,7 +116,7 @@ func RunDaemon() {
 		fmt.Fprintln(os.Stderr, "daemon: COCKPIT_ANALYZE_DISABLE is set")
 		os.Exit(1)
 	}
-	if err := os.MkdirAll(ConfigDir(), 0o755); err != nil {
+	if err := os.MkdirAll(cockpitDir(), 0o755); err != nil {
 		fmt.Fprintln(os.Stderr, "daemon:", err)
 		os.Exit(1)
 	}
@@ -147,7 +147,7 @@ func RunDaemon() {
 
 func daemonLog(format string, args ...any) {
 	msg := fmt.Sprintf("%s "+format+"\n", append([]any{time.Now().Format(time.RFC3339)}, args...)...)
-	_ = os.MkdirAll(ConfigDir(), 0o755)
+	_ = os.MkdirAll(cockpitDir(), 0o755)
 	f, err := os.OpenFile(daemonLogFile(), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
 		return
@@ -172,6 +172,7 @@ func acquisitionLoop(ctx context.Context) {
 			snap := readSnapshot()
 			snap.ContextUsedPct = st.CtxPct
 			snap.Rate5hPct = st.FiveH
+			snap.Rate7dPct = st.SevenD
 			writeSnapshot(snap)
 		}
 	}
