@@ -48,6 +48,10 @@ Control logic:
 - Code graph control: if graphify_graph=yes, recommend ` + "`graphify query`" + ` instead of grep/find.
   If graphify_graph=no and searching is non-trivial, ask permission to run ` + "`/graphify .`" + ` and
   state est_graph_build for repo_source_files files.
+- Fault control: tool_errors/not_found_errors count failed tool calls; error_top names the worst tools.
+  A high not_found count means paths/symbols are being guessed — suggest Glob or graphify query before
+  Read/Edit. If one tool dominates error_top, suggest a concrete change of approach for that tool
+  (e.g. repeated Bash failures in a test loop -> /loop or /debug) rather than re-running it.
 - Redundancy control: call out repeated reads/searches and suggest changing approach.
 - Phase-aware advising: session_phase in SIGNALS is like ECAM flight phase — PREFLIGHT favors discovery,
   CRUISE favors steady coding, APPROACH favors review/CI, LANDING favors wrap-up, EMER is context/rate
@@ -67,6 +71,18 @@ const searchInstr = `Use web search to find the single best CURRENT, well-mainta
 Claude Code integration for the need below: an MCP server, a Claude Code plugin, or a skill.
 Need: %s
 
+Known strong candidates by category — verify with search that the match is current and fits, prefer
+one of these over an obscure result when the category matches, and feel free to return something
+better if the search finds it:
+- browser automation / E2E / screenshots: Playwright MCP (microsoft/playwright-mcp)
+- session analytics / error patterns: sniffly (chiphuyen/sniffly)
+- productivity reports / prompt coaching: vibe-log-cli (vibe-log/vibe-log-cli)
+- token/cost baselining: ccusage
+- team observability / dashboards: Claude Code OpenTelemetry export + SigNoz
+- library/API docs lookup: Context7 MCP; GitHub PRs/issues: official GitHub MCP
+- design files: Figma MCP; databases: official Postgres/SQLite MCP servers
+- deep web research: a web-search MCP (e.g. Tavily/Exa)
+
 Reply with EXACTLY one line and nothing else: an emoji, the tool name, a short why, and its source URL,
 phrased as an audit-first suggestion. Example:
 🔌 Audit Playwright MCP for live browser control + screenshots — https://github.com/microsoft/playwright-mcp
@@ -85,7 +101,16 @@ func RunWorker(sigPath, session, cwd string) {
 	logf(session, "worker: start (signals %d bytes)", len(sig))
 
 	reversionary := false
-	out1, err := runClaude("", instr+"\n\nSIGNALS:\n"+string(sig))
+	prompt := instr + "\n\nSIGNALS:\n" + string(sig)
+	if seen := readSeen(session).Texts; len(seen) > 0 {
+		tail := seen
+		if len(tail) > 12 {
+			tail = tail[len(tail)-12:]
+		}
+		prompt += "\n\nALREADY SUGGESTED THIS SESSION (do not repeat these levers — propose different ones, or the memo if nothing new applies):\n- " +
+			strings.Join(tail, "\n- ")
+	}
+	out1, err := runClaude("", prompt)
 	if err != nil {
 		logf(session, "worker: phase1 claude failed: %v — reversionary mode", err)
 		reversionary = true
@@ -133,17 +158,15 @@ func RunWorker(sigPath, session, cwd string) {
 		logf(session, "worker: no suggestion lines produced")
 		return
 	}
-	if err := writeSuggestionReport(session, cwd, classified); err != nil {
-		logf(session, "worker: write report: %v", err)
-	}
+	stored := mergeSuggestions(session, cwd, classified)
 	snap := readSnapshot(session)
 	snap.AdvisorOK = !reversionary
-	snap.PendingSuggestions = countApplyable(classified)
+	snap.PendingSuggestions = countApplyable(stored)
 	if snap.Cwd == "" {
 		snap.Cwd = cwd
 	}
 	writeSnapshot(session, snap)
-	logf(session, "worker: wrote %d suggestion line(s); top=%q", len(classified), classified[0].Text)
+	logf(session, "worker: stored %d suggestion line(s) after merge (%d incoming)", len(stored), len(classified))
 }
 
 func runClaude(allowTools, prompt string) (string, error) {

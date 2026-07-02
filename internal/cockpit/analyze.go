@@ -31,10 +31,14 @@ type tEntry struct {
 }
 
 type contentItem struct {
-	Type  string `json:"type"`
-	Text  string `json:"text"`
-	Name  string `json:"name"`
-	Input struct {
+	Type      string          `json:"type"`
+	Text      string          `json:"text"`
+	Name      string          `json:"name"`
+	ID        string          `json:"id"`          // tool_use id
+	ToolUseID string          `json:"tool_use_id"` // tool_result -> originating tool_use
+	IsError   bool            `json:"is_error"`
+	Content   json.RawMessage `json:"content"` // tool_result body: string or text blocks
+	Input     struct {
 		Command      string `json:"command"`
 		FilePath     string `json:"file_path"`
 		SubagentType string `json:"subagent_type"`
@@ -50,6 +54,11 @@ type stopInput struct {
 
 var searchRe = regexp.MustCompile(`\b(grep|rg|find)\b`)
 var secretRe = regexp.MustCompile(`(?i)(api[_-]?key|authorization|bearer|password|token|secret)\s*[:=]\s*['"]?[^'"\s]+`)
+
+// errNotFoundRe classifies the ecosystem's most common fault family: the model
+// referencing files, symbols, or commands that do not exist (sniffly measured
+// this at 20-30% of all Claude Code tool errors).
+var errNotFoundRe = regexp.MustCompile(`(?i)(no such file|not found|does not exist|enoent|file has not been read|string to replace)`)
 
 // cockpitState mirrors the snapshot the status line writes from Claude Code's
 // authoritative status payload (see statusline.go writeState).
@@ -87,6 +96,9 @@ type Signals struct {
 	ToolHistogram       map[string]int
 	Searches            int
 	FilesReread3x       int
+	ToolErrors          int
+	NotFoundErrors      int
+	ErrorTop            string
 	GraphifyGraph       bool
 	RepoSourceFiles     string
 	EstGraphBuild       string
@@ -163,6 +175,9 @@ func collectSignals(in stopInput, turns int) Signals {
 	var lastModel string
 	var ctxTokens int64
 	var prompts []string
+	idToTool := map[string]string{} // tool_use id -> tool name, to attribute errors
+	toolErrs := map[string]int{}
+	notFound := 0
 
 	for _, e := range entries {
 		role := e.Message.Role
@@ -180,6 +195,9 @@ func collectSignals(in stopInput, turns int) Signals {
 			for _, it := range items {
 				if it.Type == "tool_use" {
 					hist[it.Name]++
+					if it.ID != "" {
+						idToTool[it.ID] = it.Name
+					}
 					switch it.Name {
 					case "Grep":
 						greps++
@@ -193,6 +211,18 @@ func collectSignals(in stopInput, turns int) Signals {
 						}
 					}
 				}
+				// Fault acquisition: failed tool calls, classified by originating
+				// tool and by the not-found family (bad paths/symbols/commands).
+				if it.Type == "tool_result" && it.IsError {
+					name := idToTool[it.ToolUseID]
+					if name == "" {
+						name = "tool"
+					}
+					toolErrs[name]++
+					if errNotFoundRe.MatchString(toolResultText(it.Content)) {
+						notFound++
+					}
+				}
 				if role == "user" && it.Type == "text" && it.Text != "" {
 					prompts = append(prompts, it.Text)
 				}
@@ -203,6 +233,10 @@ func collectSignals(in stopInput, turns int) Signals {
 				prompts = append(prompts, s)
 			}
 		}
+	}
+	totalErrs := 0
+	for _, n := range toolErrs {
+		totalErrs += n
 	}
 
 	dups := 0
@@ -278,6 +312,9 @@ func collectSignals(in stopInput, turns int) Signals {
 		ToolHistogram:       hist,
 		Searches:            greps,
 		FilesReread3x:       dups,
+		ToolErrors:          totalErrs,
+		NotFoundErrors:      notFound,
+		ErrorTop:            topTools(toolErrs, 2),
 		GraphifyGraph:       graph,
 		RepoSourceFiles:     files,
 		EstGraphBuild:       est,
@@ -299,6 +336,7 @@ cost_usd=%.2f  rate_5h_pct=%d  rate_7d_pct=%d
 session_phase=%s  cost_index=%s
 tool_histogram: %s
 searches=%d  files_reread_3x+=%d
+tool_errors=%d  not_found_errors=%d  error_top=%s
 graphify_graph=%s  repo_source_files=%s  est_graph_build=%s
 available_skills: %s
 available_agents: %s
@@ -309,12 +347,37 @@ recent_prompts: %s`,
 		s.CostUSD, s.Rate5hPct, s.Rate7dPct,
 		detectPhase(s, "").label(), costIndex(),
 		histString(s.ToolHistogram), s.Searches, s.FilesReread3x,
+		s.ToolErrors, s.NotFoundErrors, s.ErrorTop,
 		graph, s.RepoSourceFiles, s.EstGraphBuild,
 		s.AvailableSkills,
 		s.AvailableAgents,
 		s.AvailableMCPServers,
 		s.AvailablePlugins,
 		strings.Join(s.RecentPrompts, " "))
+}
+
+// toolResultText flattens a tool_result body (a plain string or a list of text
+// blocks) into matchable text.
+func toolResultText(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var s string
+	if json.Unmarshal(raw, &s) == nil {
+		return s
+	}
+	var items []contentItem
+	if json.Unmarshal(raw, &items) == nil {
+		var b strings.Builder
+		for _, it := range items {
+			if it.Type == "text" {
+				b.WriteString(it.Text)
+				b.WriteByte('\n')
+			}
+		}
+		return b.String()
+	}
+	return ""
 }
 
 // inferContextWindow guesses the model's context window from its name: the
@@ -591,6 +654,7 @@ func RunCleanup(r io.Reader) {
 	}
 	logf(in.SessionID, "cleanup: session ended — removing transient artifacts")
 	writeDebriefNote(in.SessionID)
+	appendHistory(in.SessionID)
 	// stateFile holds cross-session rate-limit metadata (5h/7d) — a new session
 	// needs it immediately, so it survives SessionEnd. Everything session-scoped
 	// (report, snapshot, chime, signals, counter) dies with the session so a
@@ -600,6 +664,7 @@ func RunCleanup(r io.Reader) {
 		sessionReportFile(in.SessionID),
 		sessionSnapshotFile(in.SessionID),
 		sessionChimeFile(in.SessionID),
+		sessionSeenFile(in.SessionID),
 		filepath.Join(cockpitDir(), ".sa-count-"+sessionKey(in.SessionID)),
 	}
 	paths = append(paths, legacyGlobalFiles()...)

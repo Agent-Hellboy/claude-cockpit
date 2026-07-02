@@ -24,6 +24,8 @@ type cockpitSnapshot struct {
 	Rate5hPct          int     `json:"rate_5h_pct"`
 	Rate7dPct          int     `json:"rate_7d_pct"`
 	Searches           int     `json:"searches"`
+	ToolErrors         int     `json:"tool_errors,omitempty"`
+	NotFoundErrors     int     `json:"not_found_errors,omitempty"`
 	GraphifyGraph      bool    `json:"graphify_graph"`
 	ToolTop            string  `json:"tool_top"`
 	PlanAnchor         string  `json:"plan_anchor"`
@@ -74,6 +76,8 @@ func buildSnapshot(s Signals, prReview, session, cwd string) cockpitSnapshot {
 		Rate5hPct:          s.Rate5hPct,
 		Rate7dPct:          s.Rate7dPct,
 		Searches:           s.Searches,
+		ToolErrors:         s.ToolErrors,
+		NotFoundErrors:     s.NotFoundErrors,
 		GraphifyGraph:      s.GraphifyGraph,
 		ToolTop:            topTools(s.ToolHistogram, 3),
 		PlanAnchor:         anchor,

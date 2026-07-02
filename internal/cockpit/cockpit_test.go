@@ -506,6 +506,131 @@ func TestSuggestionSessionIsolation(t *testing.T) {
 	}
 }
 
+// Fault acquisition: failed tool_results are counted, attributed to their
+// originating tool via tool_use id, and classified into the not-found family.
+func TestCollectSignalsToolErrors(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", dir)
+
+	var b strings.Builder
+	// Read that fails not-found, twice; a Bash failure that is not not-found.
+	b.WriteString(`{"message":{"role":"assistant","content":[{"type":"tool_use","id":"t1","name":"Read","input":{"file_path":"/x/missing.go"}}]}}` + "\n")
+	b.WriteString(`{"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","is_error":true,"content":"File does not exist."}]}}` + "\n")
+	b.WriteString(`{"message":{"role":"assistant","content":[{"type":"tool_use","id":"t2","name":"Read","input":{"file_path":"/x/gone.go"}}]}}` + "\n")
+	b.WriteString(`{"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t2","is_error":true,"content":[{"type":"text","text":"no such file or directory"}]}]}}` + "\n")
+	b.WriteString(`{"message":{"role":"assistant","content":[{"type":"tool_use","id":"t3","name":"Bash","input":{"command":"make test"}}]}}` + "\n")
+	b.WriteString(`{"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t3","is_error":true,"content":"exit status 2: FAIL mtls_scenario"}]}}` + "\n")
+	// a successful result must not count.
+	b.WriteString(`{"message":{"role":"assistant","content":[{"type":"tool_use","id":"t4","name":"Bash","input":{"command":"ls"}}]}}` + "\n")
+	b.WriteString(`{"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t4","content":"ok"}]}}` + "\n")
+	tp := filepath.Join(dir, "t.jsonl")
+	os.WriteFile(tp, []byte(b.String()), 0o644)
+
+	got := collectSignals(stopInput{TranscriptPath: tp, Cwd: dir, SessionID: "s"}, 5)
+	if got.ToolErrors != 3 || got.NotFoundErrors != 2 {
+		t.Fatalf("faults: errors=%d notFound=%d want 3/2", got.ToolErrors, got.NotFoundErrors)
+	}
+	if !strings.Contains(got.ErrorTop, "Read:2") {
+		t.Fatalf("error_top should attribute to Read: %q", got.ErrorTop)
+	}
+	if sig := formatSignals(got); !strings.Contains(sig, "tool_errors=3  not_found_errors=2") {
+		t.Fatalf("signals missing fault line:\n%s", sig)
+	}
+}
+
+func TestLeverKey(t *testing.T) {
+	// same lever, different phrasing -> same key.
+	a := leverKey("ADV|💰 Delegate log scanning to an Explore subagent (Haiku)")
+	b := leverKey("🔍 Use the Explore subagent on Haiku for broad log reads")
+	if a != b {
+		t.Fatalf("rephrased same-lever suggestions must key equal: %q vs %q", a, b)
+	}
+	// different MCP integrations -> different keys.
+	if leverKey("🔌 Audit Playwright MCP for screenshots") == leverKey("🔌 Audit Sentry MCP for error logs") {
+		t.Fatal("playwright and sentry MCP suggestions must not collide")
+	}
+	// no known lever -> falls back to normalized text.
+	if leverKey("✨ do something unusual") == leverKey("✨ do another thing entirely") {
+		t.Fatal("distinct no-lever texts must not collide")
+	}
+}
+
+// The advisor must not nag: a lever already suggested this session is muted on
+// later runs, standing fixes persist until applied, and instrument notes are
+// regenerated fresh each run.
+func TestMergeSuggestionsDedup(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", dir)
+
+	run1 := []classifiedSuggestion{
+		{Level: AlertCaut, Text: "🔄 repeated mTLS runs — use /loop to batch them"},
+		{Level: AlertWarn, Text: "⚠️ Context at 91% — run /compact now"}, // note: not applyable
+	}
+	stored := mergeSuggestions("s", "/proj/a", run1)
+	if len(stored) != 2 || countApplyable(stored) != 1 {
+		t.Fatalf("run1 stored=%d applyable=%d want 2/1", len(stored), countApplyable(stored))
+	}
+
+	// run 2: same /loop lever rephrased + a fresh graphify lever + the warn again.
+	run2 := []classifiedSuggestion{
+		{Level: AlertCaut, Text: "🔁 batch the repeated mTLS scenario with /loop"},
+		{Level: AlertAdv, Text: "🔍 use graphify query for architecture questions"},
+		{Level: AlertWarn, Text: "⚠️ Context at 93% — run /compact now"},
+	}
+	stored = mergeSuggestions("s", "/proj/a", run2)
+	joined := strings.Join(rawTexts(stored), "\n")
+	if strings.Count(joined, "/loop") != 1 {
+		t.Fatalf("duplicate /loop lever must be muted:\n%s", joined)
+	}
+	if !strings.Contains(joined, "graphify") {
+		t.Fatalf("fresh lever missing:\n%s", joined)
+	}
+	if strings.Count(joined, "/compact") != 1 || !strings.Contains(joined, "93%") {
+		t.Fatalf("instrument warn should regenerate fresh, once:\n%s", joined)
+	}
+
+	// run 3: only the duplicate again -> standing fixes survive, no new dup.
+	stored = mergeSuggestions("s", "/proj/a", []classifiedSuggestion{
+		{Level: AlertCaut, Text: "🔄 use /loop for the mTLS scenario loop"},
+	})
+	joined = strings.Join(rawTexts(stored), "\n")
+	if strings.Count(joined, "/loop") != 1 || !strings.Contains(joined, "graphify") {
+		t.Fatalf("run3 merge wrong:\n%s", joined)
+	}
+}
+
+func rawTexts(cs []classifiedSuggestion) []string {
+	out := make([]string, len(cs))
+	for i, c := range cs {
+		out[i] = c.Text
+	}
+	return out
+}
+
+// SessionEnd records the session's final instruments in the black-box history,
+// and debrief reports a 7-day baseline from it.
+func TestHistoryBaseline(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", dir)
+
+	writeSnapshot("h1", cockpitSnapshot{Cwd: "/p", CostUSD: 3.5, ContextUsedPct: 40, ToolErrors: 6, NotFoundErrors: 2})
+	appendHistory("h1")
+	writeSnapshot("h2", cockpitSnapshot{Cwd: "/p", CostUSD: 1.5, ContextUsedPct: 20, ToolErrors: 4})
+	appendHistory("h2")
+	appendHistory("never-analyzed") // no snapshot -> not recorded
+
+	n, cost, avgCtx, faults := baseline7d()
+	if n != 2 || cost != 5.0 || avgCtx != 30 || faults != 10 {
+		t.Fatalf("baseline: n=%d cost=%.2f avgCtx=%d faults=%d want 2/$5.00/30/10", n, cost, avgCtx, faults)
+	}
+
+	var out strings.Builder
+	RunDebrief(&out, "h1")
+	if !strings.Contains(out.String(), "baseline 7d: 2 sessions · $5.00 · avg ctx 30% · 10 faults") {
+		t.Fatalf("debrief missing baseline:\n%s", out.String())
+	}
+}
+
 func TestResolveSession(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("CLAUDE_CONFIG_DIR", dir)

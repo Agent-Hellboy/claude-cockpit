@@ -1,10 +1,13 @@
 package cockpit
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
+	"time"
 )
 
 // inferPlan extracts a route anchor from early prompts and detects drift.
@@ -145,6 +148,9 @@ func RunStatus(w io.Writer, cwd string) {
 	if snap.PlanDeviation != "" {
 		fmt.Fprintf(w, "  ○ plan deviation — %s\n", snap.PlanDeviation)
 	}
+	if snap.ToolErrors >= 8 {
+		fmt.Fprintf(w, "  ○ %d tool faults (%d not-found) — cockpit checklist faults\n", snap.ToolErrors, snap.NotFoundErrors)
+	}
 	if hasState && st.CtxPct >= 75 {
 		fmt.Fprintf(w, "  ○ context at %d%% — cockpit checklist context\n", st.CtxPct)
 	}
@@ -161,6 +167,87 @@ func RunStatus(w io.Writer, cwd string) {
 	fmt.Fprintln(w, "  Instruments nominal if nothing is listed above.")
 }
 
+// historyFile is the cross-session black-box log (one JSON line per ended
+// session). It is the ccusage-style baseline: trends only mean something
+// against a recorded past, so debrief can say how this session compares.
+func historyFile() string { return filepath.Join(cockpitDir(), "history.jsonl") }
+
+// sessionRecord is one ended session's final instruments.
+type sessionRecord struct {
+	TS         string  `json:"ts"`
+	Session    string  `json:"session"`
+	Cwd        string  `json:"cwd"`
+	CostUSD    float64 `json:"cost_usd"`
+	CtxPct     int     `json:"ctx_pct"`
+	Searches   int     `json:"searches"`
+	ToolErrors int     `json:"tool_errors"`
+	NotFound   int     `json:"not_found"`
+}
+
+// appendHistory records the ending session's final snapshot in the black-box
+// log. Called from SessionEnd cleanup before per-session artifacts are removed.
+func appendHistory(session string) {
+	snap := readSnapshot(session)
+	if snap.Session == "" {
+		return // session never produced instruments
+	}
+	rec := sessionRecord{
+		TS:         time.Now().Format(time.RFC3339),
+		Session:    safeSession(session),
+		Cwd:        snap.Cwd,
+		CostUSD:    snap.CostUSD,
+		CtxPct:     snap.ContextUsedPct,
+		Searches:   snap.Searches,
+		ToolErrors: snap.ToolErrors,
+		NotFound:   snap.NotFoundErrors,
+	}
+	b, err := json.Marshal(rec)
+	if err != nil {
+		return
+	}
+	f, err := os.OpenFile(historyFile(), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	_, _ = f.Write(append(b, '\n'))
+}
+
+// baseline7d summarizes the last 7 days of ended sessions.
+func baseline7d() (n int, cost float64, avgCtx, faults int) {
+	b, err := os.ReadFile(historyFile())
+	if err != nil || len(b) > 1<<20 {
+		if len(b) > 1<<20 {
+			b = b[len(b)-(1<<20):] // bound work on a huge log; partial first line is skipped by Unmarshal
+		}
+		if err != nil {
+			return
+		}
+	}
+	cutoff := time.Now().AddDate(0, 0, -7)
+	ctxSum := 0
+	for _, ln := range strings.Split(string(b), "\n") {
+		if ln == "" {
+			continue
+		}
+		var r sessionRecord
+		if json.Unmarshal([]byte(ln), &r) != nil {
+			continue
+		}
+		if ts, err := time.Parse(time.RFC3339, r.TS); err != nil || ts.Before(cutoff) {
+			continue
+		}
+		n++
+		cost += r.CostUSD
+		ctxSum += r.CtxPct
+		faults += r.ToolErrors
+	}
+	if n > 0 {
+		avgCtx = ctxSum / n
+	}
+	return
+}
+
 // RunDebrief prints a post-session black-box summary.
 func RunDebrief(w io.Writer, session string) {
 	if session == "" {
@@ -172,10 +259,16 @@ func RunDebrief(w io.Writer, session string) {
 	fmt.Fprintln(w, "Cockpit debrief")
 	fmt.Fprintf(w, "  phase:       %s\n", snap.Phase)
 	fmt.Fprintf(w, "  cost index:  %s\n", snap.CostIndex)
-	if st.CtxSize > 0 {
+	// prefer the session's own instruments; global state is another session's.
+	if snap.CtxSize > 0 || snap.ContextUsedPct > 0 {
+		fmt.Fprintf(w, "  context:     %d%%  $%.2f\n", snap.ContextUsedPct, snap.CostUSD)
+	} else if st.CtxSize > 0 {
 		fmt.Fprintf(w, "  context:     %d%%  $%.2f\n", st.CtxPct, st.Cost)
 	}
 	fmt.Fprintf(w, "  searches:    %d\n", snap.Searches)
+	if snap.ToolErrors > 0 {
+		fmt.Fprintf(w, "  faults:      %d tool errors (%d not-found)\n", snap.ToolErrors, snap.NotFoundErrors)
+	}
 	fmt.Fprintf(w, "  tools:       %s\n", snap.ToolTop)
 	fmt.Fprintf(w, "  suggestions: %d pending at end\n", snap.PendingSuggestions)
 	if snap.PlanAnchor != "" {
@@ -186,6 +279,9 @@ func RunDebrief(w io.Writer, session string) {
 		if _, err := os.Stat(logPath); err == nil {
 			fmt.Fprintf(w, "  log:         %s\n", logPath)
 		}
+	}
+	if n, cost, avgCtx, faults := baseline7d(); n > 0 {
+		fmt.Fprintf(w, "  baseline 7d: %d sessions · $%.2f · avg ctx %d%% · %d faults\n", n, cost, avgCtx, faults)
 	}
 }
 

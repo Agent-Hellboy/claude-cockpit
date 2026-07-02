@@ -11,7 +11,35 @@ notes, so keep entries user-facing and concise. Add new work under
 
 ## [Unreleased]
 
+### Added
+- **Fault analysis (inspired by sniffly).** The analyzer now counts failed tool
+  calls from the transcript, attributes them to the originating tool, and
+  classifies the not-found family (missing files/symbols/commands — the
+  ecosystem's most common Claude Code error at 20-30%). Faults feed the
+  advisor's signals (`tool_errors`, `not_found_errors`, `error_top`), appear on
+  `cockpit status` and `debrief`, get a dedicated `cockpit checklist faults`
+  procedure, and drive a reversionary rule ("verify paths with Glob/graphify
+  before Read/Edit") when the not-found pattern repeats.
+- **Suggestion memory — the advisor no longer nags (inspired by vibe-log's
+  coaching loop).** Every surfaced suggestion is remembered per session and
+  normalized to the lever it pulls (graphify, /loop, Explore, a named MCP…), so
+  a rephrased duplicate is muted on later advisor runs and the model is told
+  what it already suggested. Standing applyable fixes persist in the report
+  until applied; instrument warnings regenerate fresh each run.
+- **7-day baseline in debrief (inspired by ccusage).** SessionEnd appends the
+  session's final instruments (cost, context %, faults, searches) to a
+  black-box `history.jsonl`; `cockpit debrief` reports the 7-day baseline
+  (sessions, spend, avg context, faults) so suggestions and savings are
+  measured against a recorded past instead of vibes.
+- **Research-seeded tool search.** The TOOLGAP web search now carries a curated
+  candidate map by category (Playwright MCP, sniffly, vibe-log, ccusage,
+  Context7, GitHub/Figma/Postgres MCP, OpenTelemetry+SigNoz), so the advisor
+  recommends known-good, current integrations instead of whatever ranks first.
+
 ### Fixed
+- **Debrief showed another session's context/cost.** It now prefers the
+  session's own snapshot instruments over the globally-last-written state.
+
 - **Suggestions leaked across concurrent sessions.** The advisor stored its
   report, snapshot, and chime state in single global files, so the daemon's
   last-processed session pushed its suggestions into every other session's

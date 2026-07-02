@@ -98,13 +98,15 @@ func Uninstall() error {
 	_ = os.Remove(filepath.Join(dir, ".cockpit-debug.log"))
 	_ = os.Remove(filepath.Join(dir, ".cockpit-daemon.pid"))
 	_ = os.Remove(filepath.Join(dir, ".cockpit-daemon.log"))
+	_ = os.Remove(filepath.Join(dir, "history.jsonl"))
 	_ = os.RemoveAll(filepath.Join(dir, "cockpit-jobs"))
 	if entries, err := os.ReadDir(dir); err == nil {
 		for _, e := range entries {
 			name := e.Name()
 			transient := strings.HasPrefix(name, ".sa-count-") ||
 				strings.HasSuffix(name, ".report") || strings.HasSuffix(name, ".snapshot") ||
-				strings.HasSuffix(name, ".chime") || strings.HasSuffix(name, ".signals")
+				strings.HasSuffix(name, ".chime") || strings.HasSuffix(name, ".signals") ||
+				strings.HasSuffix(name, ".seen")
 			if transient {
 				_ = os.Remove(filepath.Join(dir, name))
 			}

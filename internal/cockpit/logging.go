@@ -52,6 +52,10 @@ func sessionChimeFile(session string) string {
 	return filepath.Join(logDir(), safeSession(session)+".chime")
 }
 
+func sessionSeenFile(session string) string {
+	return filepath.Join(logDir(), safeSession(session)+".seen")
+}
+
 // logf appends a timestamped line to the session's log file. Always on (this is
 // the durable record the user asked for); failures are swallowed.
 func logf(session, format string, args ...any) {

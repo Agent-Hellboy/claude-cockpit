@@ -216,6 +216,13 @@ func ChecklistSteps(topic string) []string {
 			"Stop repeated grep/find on the same paths",
 			"Build graph with /graphify . if graphify-out is missing",
 		}
+	case "faults", "fault", "errors":
+		return []string{
+			"Verify paths with Glob/ls before Read/Edit — most faults are not-found",
+			"Locate symbols with graphify query or LSP instead of guessing file paths",
+			"Read a file before editing it; retry Edit with exact current text",
+			"If one tool dominates errors, change approach rather than re-running it",
+		}
 	default:
 		return []string{
 			"Run cockpit list to see numbered suggestions",
@@ -264,6 +271,12 @@ func ruleBasedSuggestions(sig string) []classifiedSuggestion {
 		out = append(out, classifiedSuggestion{
 			Level: AlertCaut,
 			Text:  "🔍 Heavy search pattern — audit /graphify . or use graphify query",
+		})
+	}
+	if nf := parseSignalInt(sig, "not_found_errors"); nf >= 5 {
+		out = append(out, classifiedSuggestion{
+			Level: AlertCaut,
+			Text:  "📁 Repeated not-found tool faults — verify paths with Glob or graphify query before Read/Edit",
 		})
 	}
 	if len(out) == 0 {
@@ -317,4 +330,123 @@ func writeReportLines(session, cwd string, texts []string) error {
 		return err
 	}
 	return os.WriteFile(sessionReportFile(session), b, 0o644)
+}
+
+// ---- suggestion memory: stop the advisor nagging the same lever every run ----
+
+const (
+	maxSeenTexts   = 60 // per-session history cap
+	maxReportLines = 4  // stored suggestion rows (mirrors the bar's safety cap)
+)
+
+// seenStore remembers every suggestion the advisor has surfaced this session —
+// including ones the user applied or that rotated out — so a lever is proposed
+// once, not on every advisor cadence.
+type seenStore struct {
+	Texts []string `json:"texts"`
+}
+
+func readSeen(session string) seenStore {
+	var s seenStore
+	if session == "" {
+		return s
+	}
+	b, err := os.ReadFile(sessionSeenFile(session))
+	if err != nil {
+		return s
+	}
+	_ = json.Unmarshal(b, &s)
+	return s
+}
+
+func appendSeen(session string, texts []string) {
+	if session == "" || len(texts) == 0 {
+		return
+	}
+	s := readSeen(session)
+	s.Texts = append(s.Texts, texts...)
+	if len(s.Texts) > maxSeenTexts {
+		s.Texts = s.Texts[len(s.Texts)-maxSeenTexts:]
+	}
+	if b, err := json.Marshal(s); err == nil {
+		_ = os.WriteFile(sessionSeenFile(session), b, 0o644)
+	}
+}
+
+// leverTokens name the concrete controls a suggestion can pull. Two suggestions
+// that mention the same lever set are the same advice however haiku rephrases
+// them. Specific integration names come before generic categories so
+// "Playwright MCP" and "Sentry MCP" key differently.
+var leverTokens = []string{
+	"graphify", "/loop", "/batch", "/verify", "/debug", "/code-review", "/model",
+	"explore", "subagent", "plan mode", "playwright", "puppeteer", "context7",
+	"sentry", "github", "jira", "figma", "slack", "notion", "postgres", "sqlite",
+	"sniffly", "vibe-log", "ccusage", "opentelemetry", "signoz",
+	"haiku", "sonnet", "opus", "mcp", "skill", "claude.md",
+}
+
+// leverKey normalizes a suggestion to the set of levers it pulls; falls back to
+// the normalized text when no known lever is mentioned.
+func leverKey(text string) string {
+	lower := strings.ToLower(stripSeverityPrefix(text))
+	var hits []string
+	for _, tok := range leverTokens {
+		if strings.Contains(lower, tok) {
+			hits = append(hits, tok)
+		}
+	}
+	if len(hits) == 0 {
+		return "text:" + strings.Join(strings.Fields(lower), " ")
+	}
+	return strings.Join(hits, "+")
+}
+
+// mergeSuggestions folds a new advisor batch into the session's report:
+//   - standing applyable fixes persist until applied (or rotated out),
+//   - instrument notes/warnings are regenerated fresh each run,
+//   - an applyable lever already suggested this session (seen store) is muted,
+//
+// and returns what was stored. The seen store records newly surfaced levers.
+func mergeSuggestions(session, cwd string, incoming []classifiedSuggestion) []classifiedSuggestion {
+	snap := readSnapshot(session)
+	st, _ := readState()
+
+	keys := map[string]bool{}
+	for _, t := range readSeen(session).Texts {
+		keys[leverKey(t)] = true
+	}
+
+	var out []classifiedSuggestion
+	for _, ln := range readSuggestions(session) {
+		if c := classifySuggestion(ln, snap, st); isApplyable(c) {
+			out = append(out, c)
+			keys[leverKey(c.Text)] = true
+		}
+	}
+
+	var fresh []string
+	for _, c := range incoming {
+		if isApplyable(c) {
+			k := leverKey(c.Text)
+			if keys[k] {
+				continue
+			}
+			keys[k] = true
+			fresh = append(fresh, c.Text)
+		}
+		out = append(out, c)
+	}
+	if len(out) > maxReportLines {
+		// oldest standing fixes rotate out first; they stay in the seen store.
+		out = out[len(out)-maxReportLines:]
+	}
+	appendSeen(session, fresh)
+	if len(out) == 0 {
+		_ = os.Remove(sessionReportFile(session))
+		return nil
+	}
+	if err := writeSuggestionReport(session, cwd, out); err != nil {
+		logf(session, "mergeSuggestions: write report: %v", err)
+	}
+	return out
 }
