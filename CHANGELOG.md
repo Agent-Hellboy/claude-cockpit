@@ -11,6 +11,16 @@ notes, so keep entries user-facing and concise. Add new work under
 
 ## [Unreleased]
 
+### Fixed
+- **`/cockpit apply <n>` (and any multi-word argument) failed with
+  `unknown subcommand "apply 1"`.** The slash command re-expanded the
+  substituted `$ARGUMENTS` from a shell variable, and an unquoted `${VAR}`
+  word-splits in bash but *not* in zsh (the macOS default shell), so `apply 1`
+  was passed to the binary as a single argument. The `/cockpit` command now
+  routes arguments through an inner `sh -c` as positional parameters, which
+  split identically in every POSIX shell. A bare `/cockpit` still defaults to
+  the `systems` synoptic. Re-run `cockpit install` to pick up the fix.
+
 ## [0.1.7] - 2026-07-02
 
 ### Fixed

@@ -250,6 +250,14 @@ func slashCommandPath() string {
 // custom CLAUDE_CONFIG_DIR. The embedded shell defaults a bare /cockpit to the
 // `systems` synoptic, and passes any argument (status, list, apply <n>,
 // checklist <topic>, daemon status, debrief) straight through to the binary.
+//
+// $ARGUMENTS is text-substituted by Claude Code, so multi-word input like
+// `apply 1` must be re-split into separate argv entries. We route through an
+// inner `sh -c` where the substituted tokens arrive as positional parameters
+// ($@) rather than being re-expanded from a variable: an unquoted ${VAR}
+// word-splits in bash but NOT in zsh (macOS default), which previously collapsed
+// `apply 1` into a single argument and produced `unknown subcommand "apply 1"`.
+// Passing the tokens as positionals splits identically in every POSIX shell.
 const cockpitCommandMD = "---\n" +
 	"description: Manage claude-cockpit — synoptic, status, suggestions, apply, daemon\n" +
 	"argument-hint: \"[systems | status | list | apply <n> | checklist <topic> | plan | debrief | daemon status]\"\n" +
@@ -258,7 +266,7 @@ const cockpitCommandMD = "---\n" +
 	"Run the cockpit control below, then explain the output plainly to the user:\n" +
 	"summarize what each section means, call out anything in the warning/caution\n" +
 	"colors first, and if they asked to `apply <n>` state exactly what changed.\n\n" +
-	"!`ARGS=\"$ARGUMENTS\"; {{EXE}} ${ARGS:-systems} 2>&1`\n"
+	"!`sh -c 'b=$1; shift; if [ \"$#\" -eq 0 ]; then exec \"$b\" systems; else exec \"$b\" \"$@\"; fi' cockpit {{EXE}} $ARGUMENTS 2>&1`\n"
 
 func writeSlashCommand(exe string) error {
 	path := slashCommandPath()
