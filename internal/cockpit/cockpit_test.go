@@ -434,12 +434,54 @@ func TestWrapText(t *testing.T) {
 }
 
 func TestExtractToolGap(t *testing.T) {
-	out := "🎯 switch model\n📉 use graphify\nTOOLGAP: browser automation and screenshots\n"
-	if got := extractToolGap(out); got != "browser automation and screenshots" {
-		t.Errorf("extractToolGap=%q", got)
+	// structured form: capability || evidence || query.
+	out := "🎯 switch model\nTOOLGAP: browser automation || prompts ask for UI checks, curl used 12x || Playwright MCP Claude Code\n"
+	g, ok := extractToolGap(out)
+	if !ok || g.Need != "browser automation" || !strings.Contains(g.Evidence, "curl used 12x") ||
+		g.Query != "Playwright MCP Claude Code" {
+		t.Errorf("structured gap parse: ok=%v %+v", ok, g)
 	}
-	if got := extractToolGap("🎯 all good\n✅ efficient"); got != "" {
-		t.Errorf("no gap should be empty, got %q", got)
+	// legacy single-phrase form still parses, with a derived query.
+	g, ok = extractToolGap("TOOLGAP: browser automation and screenshots")
+	if !ok || g.Need != "browser automation and screenshots" || !strings.Contains(g.Query, "browser automation") {
+		t.Errorf("legacy gap parse: ok=%v %+v", ok, g)
+	}
+	if _, ok := extractToolGap("🎯 all good\n✅ efficient"); ok {
+		t.Error("no gap line should parse as a gap")
+	}
+}
+
+// The scout prompt is targeted with the session's own analysis: gap evidence,
+// stack, and already-installed integrations it must not re-suggest.
+func TestBuildScoutPrompt(t *testing.T) {
+	sig := "turns=9\nrepo_lang=Go  graphify_graph=yes  repo_source_files=?\n" +
+		"available_skills: graphify verify\navailable_mcp_servers: github context7\n"
+	got := buildScoutPrompt(toolGap{
+		Need:     "browser automation",
+		Evidence: "curl used for UI checks",
+		Query:    "Playwright MCP",
+	}, sig)
+	for _, want := range []string{
+		"CAPABILITY GAP: browser automation",
+		"SESSION EVIDENCE: curl used for UI checks",
+		"SUGGESTED SEARCH QUERY: Playwright MCP",
+		"PROJECT STACK: Go",
+		"github context7 graphify verify",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("scout prompt missing %q", want)
+		}
+	}
+}
+
+func TestScanSourceLang(t *testing.T) {
+	dir := t.TempDir()
+	for _, f := range []string{"a.go", "b.go", "c.ts", "d.md"} {
+		os.WriteFile(filepath.Join(dir, f), []byte("x"), 0o644)
+	}
+	n, lang := scanSource(dir)
+	if n != 3 || lang != "Go" {
+		t.Fatalf("scanSource=%d,%q want 3,Go", n, lang)
 	}
 }
 

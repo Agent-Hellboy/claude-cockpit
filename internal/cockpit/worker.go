@@ -38,13 +38,16 @@ Control logic:
 - MCP control: if MCP servers are available, recommend the exact server name when obvious. Mention
   /mcp to inspect servers, @server:resource references, MCP prompt commands, and MCP Tool Search when
   many tools exist or schemas are bloating context.
-- Tool gap signal: if the recent prompts involve an EXTERNAL capability — browser/UI/screenshot/E2E, a
-  database, external docs/API references, design files, deep web research, logs/observability, etc. —
-  and available_mcp_servers has no matching server, add ONE extra final line, exactly:
-  TOOLGAP: <short capability phrase>   (e.g. "TOOLGAP: browser automation and screenshots"). A separate
-  step will search the web for a concrete tool — do NOT name or invent a tool/URL yourself. A built-in
-  skill does not replace a real integration. Omit the TOOLGAP line entirely if no external capability
-  is in play.
+- Tool gap signal: if the session's actual work — recent prompts, the tool histogram, repeated faults —
+  shows an EXTERNAL capability being done the hard way (browser/UI/screenshot/E2E, a database, external
+  docs/API references, design files, deep web research, logs/observability, repeated manual test loops,
+  etc.) and available_mcp_servers has no matching server, add ONE extra final line, exactly:
+  TOOLGAP: <capability phrase> || <evidence: one clause citing the concrete signal that shows the gap> || <web search query targeted at the capability AND repo_lang>
+  Example:
+  TOOLGAP: live browser control and screenshots || prompts ask for UI checks but Bash curl is used 12x || Playwright MCP server Claude Code browser automation
+  A separate step will run the search — do NOT name a URL or invent a tool in your suggestion lines.
+  A built-in skill does not replace a real integration. Omit the TOOLGAP line entirely if no external
+  capability is in play; at most one TOOLGAP per run, for the highest-leverage gap.
 - Code graph control: if graphify_graph=yes, recommend ` + "`graphify query`" + ` instead of grep/find.
   If graphify_graph=no and searching is non-trivial, ask permission to run ` + "`/graphify .`" + ` and
   state est_graph_build for repo_source_files files.
@@ -67,13 +70,25 @@ ADV|💰 Delegate log scanning to Explore (Haiku).
 MEMO|✅ session looks efficient.
 If the session is already efficient, output exactly: MEMO|✅ session looks efficient.`
 
-const searchInstr = `Use web search to find the single best CURRENT, well-maintained, popular open-source
-Claude Code integration for the need below: an MCP server, a Claude Code plugin, or a skill.
-Need: %s
+const searchInstr = `You are the cockpit tool scout. An advisor analyzed a live Claude Code session and found a
+capability being done the hard way. Find the single best CURRENT, well-maintained integration
+(an MCP server, Claude Code plugin, or skill) that closes it.
 
-Known strong candidates by category — verify with search that the match is current and fits, prefer
-one of these over an obscure result when the category matches, and feel free to return something
-better if the search finds it:
+CAPABILITY GAP: %s
+SESSION EVIDENCE: %s
+SUGGESTED SEARCH QUERY: %s
+PROJECT STACK: %s
+ALREADY AVAILABLE (never suggest these, or anything they already cover): %s
+
+Method:
+1. Run 1-3 web searches, starting from the suggested query; refine with the project stack if results
+   are generic.
+2. Prefer official/first-party integrations, then the curated shortlist below when the category
+   matches, then the best community option with recent maintenance and real adoption.
+3. Reject anything already available above, apparently unmaintained, or a poor fit for the stack or
+   the evidence (the tool must fix what the session actually struggled with).
+
+Curated shortlist by category:
 - browser automation / E2E / screenshots: Playwright MCP (microsoft/playwright-mcp)
 - session analytics / error patterns: sniffly (chiphuyen/sniffly)
 - productivity reports / prompt coaching: vibe-log-cli (vibe-log/vibe-log-cli)
@@ -83,9 +98,9 @@ better if the search finds it:
 - design files: Figma MCP; databases: official Postgres/SQLite MCP servers
 - deep web research: a web-search MCP (e.g. Tavily/Exa)
 
-Reply with EXACTLY one line and nothing else: an emoji, the tool name, a short why, and its source URL,
-phrased as an audit-first suggestion. Example:
-🔌 Audit Playwright MCP for live browser control + screenshots — https://github.com/microsoft/playwright-mcp
+Reply with EXACTLY one line and nothing else: an emoji, the tool name, a short why tied to the
+evidence, and its source URL, phrased as an audit-first suggestion. Example:
+🔌 Audit Playwright MCP for the UI checks now done via curl — https://github.com/microsoft/playwright-mcp
 If you cannot find a credible match, reply with an empty line.`
 
 // RunWorker reads signals for a session and writes suggestions to that
@@ -123,17 +138,18 @@ func RunWorker(sigPath, session, cwd string) {
 		classified = ruleBasedSuggestions(string(sig))
 	} else {
 		lines := advisorLines(out1, 3)
-		gap := extractToolGap(out1)
+		gap, hasGap := extractToolGap(out1)
 
-		if gap != "" {
-			logf(session, "worker: tool gap detected: %q -> web search", gap)
-			out2, err := runClaude("WebSearch", fmt.Sprintf(searchInstr, gap))
+		if hasGap {
+			logf(session, "worker: tool gap detected: %q (evidence: %q) -> web search", gap.Need, gap.Evidence)
+			out2, err := runClaude("WebSearch", buildScoutPrompt(gap, string(sig)))
 			if err != nil {
 				logf(session, "worker: phase2 search failed: %v", err)
 			} else {
 				logf(session, "worker: phase2 search output:\n%s", strings.TrimSpace(out2))
 				if tool := emojiLines(out2, 1); len(tool) > 0 {
-					lines = append(lines, tool[0])
+					// a tool audit is an advisory, not an instrument warning.
+					lines = append(lines, "ADV|"+tool[0])
 					if len(lines) > 4 {
 						lines = lines[:4]
 					}
@@ -181,12 +197,68 @@ func runClaude(allowTools, prompt string) (string, error) {
 	return string(out), err
 }
 
-func extractToolGap(out string) string {
+// toolGap is the advisor's structured gap analysis: what capability is missing,
+// which session signal proves it, and how to search for a closer.
+type toolGap struct {
+	Need     string
+	Evidence string
+	Query    string
+}
+
+func extractToolGap(out string) (toolGap, bool) {
 	for _, ln := range strings.Split(out, "\n") {
 		ln = strings.TrimSpace(ln)
-		if s, ok := strings.CutPrefix(ln, "TOOLGAP:"); ok {
-			return strings.TrimSpace(s)
+		s, ok := strings.CutPrefix(ln, "TOOLGAP:")
+		if !ok {
+			continue
 		}
+		parts := strings.Split(s, "||")
+		g := toolGap{Need: strings.TrimSpace(parts[0])}
+		if len(parts) > 1 {
+			g.Evidence = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(parts[1]), "evidence:"))
+		}
+		if len(parts) > 2 {
+			g.Query = strings.TrimSpace(parts[2])
+		}
+		if g.Need == "" {
+			continue
+		}
+		if g.Query == "" {
+			g.Query = g.Need + " Claude Code MCP server"
+		}
+		return g, true
 	}
-	return ""
+	return toolGap{}, false
+}
+
+// buildScoutPrompt targets the phase-2 web search with the session's own
+// analysis: the gap, its evidence, the project stack, and what is already
+// installed (so the scout never re-suggests existing integrations).
+func buildScoutPrompt(g toolGap, sig string) string {
+	stack := parseSignalStr(sig, "repo_lang=")
+	installed := strings.TrimSpace(strings.Join(strings.Fields(
+		parseSignalStr(sig, "available_mcp_servers:")+" "+parseSignalStr(sig, "available_skills:")), " "))
+	return fmt.Sprintf(searchInstr,
+		g.Need,
+		fallback(g.Evidence, "(none given)"),
+		g.Query,
+		fallback(stack, "unknown"),
+		fallback(installed, "(none)"))
+}
+
+// parseSignalStr extracts the rest of the line following key in a signals blob.
+func parseSignalStr(sig, key string) string {
+	i := strings.Index(sig, key)
+	if i < 0 {
+		return ""
+	}
+	rest := sig[i+len(key):]
+	if j := strings.IndexByte(rest, '\n'); j >= 0 {
+		rest = rest[:j]
+	}
+	// keys embedded mid-line (repo_lang=Go  graphify_graph=...) end at a double space.
+	if j := strings.Index(rest, "  "); j >= 0 {
+		rest = rest[:j]
+	}
+	return strings.TrimSpace(rest)
 }

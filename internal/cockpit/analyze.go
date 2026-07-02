@@ -99,6 +99,7 @@ type Signals struct {
 	ToolErrors          int
 	NotFoundErrors      int
 	ErrorTop            string
+	RepoLang            string
 	GraphifyGraph       bool
 	RepoSourceFiles     string
 	EstGraphBuild       string
@@ -248,8 +249,8 @@ func collectSignals(in stopInput, turns int) Signals {
 
 	files, est := "?", "n/a"
 	graph := hasGraphifyGraph(in.Cwd)
+	nf, repoLang := scanSource(in.Cwd)
 	if !graph {
-		nf := countSourceFiles(in.Cwd)
 		files = strconv.Itoa(nf)
 		est = graphETA(nf)
 	}
@@ -315,6 +316,7 @@ func collectSignals(in stopInput, turns int) Signals {
 		ToolErrors:          totalErrs,
 		NotFoundErrors:      notFound,
 		ErrorTop:            topTools(toolErrs, 2),
+		RepoLang:            fallback(repoLang, "?"),
 		GraphifyGraph:       graph,
 		RepoSourceFiles:     files,
 		EstGraphBuild:       est,
@@ -337,7 +339,7 @@ session_phase=%s  cost_index=%s
 tool_histogram: %s
 searches=%d  files_reread_3x+=%d
 tool_errors=%d  not_found_errors=%d  error_top=%s
-graphify_graph=%s  repo_source_files=%s  est_graph_build=%s
+repo_lang=%s  graphify_graph=%s  repo_source_files=%s  est_graph_build=%s
 available_skills: %s
 available_agents: %s
 available_mcp_servers: %s
@@ -348,7 +350,7 @@ recent_prompts: %s`,
 		detectPhase(s, "").label(), costIndex(),
 		histString(s.ToolHistogram), s.Searches, s.FilesReread3x,
 		s.ToolErrors, s.NotFoundErrors, s.ErrorTop,
-		graph, s.RepoSourceFiles, s.EstGraphBuild,
+		s.RepoLang, graph, s.RepoSourceFiles, s.EstGraphBuild,
 		s.AvailableSkills,
 		s.AvailableAgents,
 		s.AvailableMCPServers,
@@ -472,10 +474,26 @@ var srcExts = map[string]bool{
 	".kt": true, ".swift": true,
 }
 
+// extLang names the stack for the tool scout, so a capability search can be
+// narrowed to integrations that fit the project.
+var extLang = map[string]string{
+	".go": "Go", ".ts": "TypeScript", ".tsx": "TypeScript/React", ".js": "JavaScript",
+	".jsx": "JavaScript/React", ".py": "Python", ".rs": "Rust", ".java": "Java",
+	".rb": "Ruby", ".c": "C", ".cc": "C++", ".cpp": "C++", ".h": "C/C++",
+	".hpp": "C++", ".cs": "C#", ".kt": "Kotlin", ".swift": "Swift",
+}
+
 var errStopWalk = fmt.Errorf("stop")
 
 func countSourceFiles(root string) int {
+	n, _ := scanSource(root)
+	return n
+}
+
+// scanSource counts source files and reports the dominant language.
+func scanSource(root string) (int, string) {
 	n := 0
+	byExt := map[string]int{}
 	_ = filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return nil
@@ -487,15 +505,23 @@ func countSourceFiles(root string) int {
 			}
 			return nil
 		}
-		if srcExts[strings.ToLower(filepath.Ext(p))] {
+		ext := strings.ToLower(filepath.Ext(p))
+		if srcExts[ext] {
 			n++
+			byExt[ext]++
 			if n >= 30000 {
 				return errStopWalk
 			}
 		}
 		return nil
 	})
-	return n
+	best, bestN := "", 0
+	for ext, c := range byExt {
+		if c > bestN {
+			best, bestN = ext, c
+		}
+	}
+	return n, extLang[best]
 }
 
 func graphETA(files int) string {

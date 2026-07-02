@@ -31,10 +31,16 @@ notes, so keep entries user-facing and concise. Add new work under
   black-box `history.jsonl`; `cockpit debrief` reports the 7-day baseline
   (sessions, spend, avg context, faults) so suggestions and savings are
   measured against a recorded past instead of vibes.
-- **Research-seeded tool search.** The TOOLGAP web search now carries a curated
-  candidate map by category (Playwright MCP, sniffly, vibe-log, ccusage,
-  Context7, GitHub/Figma/Postgres MCP, OpenTelemetry+SigNoz), so the advisor
-  recommends known-good, current integrations instead of whatever ranks first.
+- **Research-seeded, session-targeted tool scout.** The advisor's TOOLGAP is
+  now a structured gap analysis — capability, one-line evidence from the
+  session's own instruments, and a targeted search query — and the phase-2
+  scout receives the project stack (new `repo_lang` signal), everything already
+  installed (never re-suggested), a curated candidate map by category
+  (Playwright MCP, sniffly, vibe-log, ccusage, Context7, GitHub/Figma/Postgres
+  MCP, OpenTelemetry+SigNoz), and a search method (official first, shortlist
+  second, maintained community third). The returned audit line is tied to the
+  evidence ("Playwright MCP for the UI checks now done via Bash with errors")
+  and classified as an advisory.
 
 ### Fixed
 - **Debrief showed another session's context/cost.** It now prefers the
