@@ -127,8 +127,8 @@ func RunAnalyze(r io.Reader) {
 	logf(in.SessionID, "analyze: turn %d (cadence k=%d) — run", n, k)
 
 	sig := collectSignals(in, n)
-	writeSnapshot(buildSnapshot(sig, ""))
-	spawnWorker(formatSignals(sig), in.SessionID)
+	writeSnapshot(in.SessionID, buildSnapshot(sig, "", in.SessionID, in.Cwd))
+	spawnWorker(formatSignals(sig), in.SessionID, in.Cwd)
 }
 
 // analyzeCadence returns how many turns should elapse between advisor runs once
@@ -230,9 +230,11 @@ func collectSignals(in stopInput, turns int) Signals {
 		prompts[i] = redactSecrets(prompts[i])
 	}
 
-	// Prefer the authoritative context/cost/rate snapshot the status line captured
-	// from Claude Code. Fall back to inferring the window from the model name only
-	// when no snapshot exists.
+	// Prefer THIS session's authoritative context/cost captured by its own
+	// statusline renders (per-session snapshot). The global state file only
+	// contributes account-wide rate limits plus a last-resort context fallback —
+	// it is written by whichever session rendered last, so trusting its context
+	// here would classify against another session's pressure.
 	window := inferContextWindow(lastModel)
 	usedPct := 0
 	if window > 0 {
@@ -241,13 +243,25 @@ func collectSignals(in stopInput, turns int) Signals {
 	ctxSource := "inferred"
 	var costUSD float64
 	var rate5h, rate7d int
-	if st, ok := readState(); ok && st.CtxSize > 0 {
+	st, hasState := readState()
+	if hasState {
+		rate5h, rate7d = st.FiveH, st.SevenD
+	}
+	if snap := readSnapshot(in.SessionID); snap.CtxSize > 0 {
+		window = snap.CtxSize
+		usedPct = snap.ContextUsedPct
+		if snap.CtxTokens > 0 {
+			ctxTokens = snap.CtxTokens
+		}
+		costUSD = snap.CostUSD
+		ctxSource = "actual"
+	} else if hasState && st.CtxSize > 0 {
 		window = st.CtxSize
 		usedPct = st.CtxPct
 		if st.CtxTokens > 0 {
 			ctxTokens = st.CtxTokens
 		}
-		costUSD, rate5h, rate7d = st.Cost, st.FiveH, st.SevenD
+		costUSD = st.Cost
 		ctxSource = "actual"
 	}
 
@@ -561,8 +575,8 @@ func sessionKey(sid string) string {
 }
 
 // spawnWorker hands advisor work to the persistent daemon or a one-shot worker.
-func spawnWorker(signals, session string) {
-	dispatchAdvisor(signals, session)
+func spawnWorker(signals, session, cwd string) {
+	dispatchAdvisor(signals, session, cwd)
 }
 
 // RunCleanup removes a session's transient artifacts. Invoked by the SessionEnd
@@ -577,14 +591,19 @@ func RunCleanup(r io.Reader) {
 	}
 	logf(in.SessionID, "cleanup: session ended — removing transient artifacts")
 	writeDebriefNote(in.SessionID)
-	// stateFile and snapshotFile hold cross-session rate-limit/context metadata
-	// (5h/7d, last-known context %) — a new session needs those immediately, so
-	// they survive SessionEnd and are only ever overwritten, never deleted here.
-	for _, p := range []string{
+	// stateFile holds cross-session rate-limit metadata (5h/7d) — a new session
+	// needs it immediately, so it survives SessionEnd. Everything session-scoped
+	// (report, snapshot, chime, signals, counter) dies with the session so a
+	// later session can never pick up this one's suggestions.
+	paths := []string{
 		sessionSignalsFile(in.SessionID),
+		sessionReportFile(in.SessionID),
+		sessionSnapshotFile(in.SessionID),
+		sessionChimeFile(in.SessionID),
 		filepath.Join(cockpitDir(), ".sa-count-"+sessionKey(in.SessionID)),
-		hintFile(), reportFile(), chimeStateFile(),
-	} {
+	}
+	paths = append(paths, legacyGlobalFiles()...)
+	for _, p := range paths {
 		_ = os.Remove(p)
 	}
 	// Keep the .log itself as the durable record; the user can prune cockpit-logs.

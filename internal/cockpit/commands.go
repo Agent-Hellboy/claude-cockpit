@@ -70,7 +70,8 @@ func isStopword(w string) bool {
 
 // RunPlan shows the FMS-style session route.
 func RunPlan(w io.Writer) {
-	snap := readSnapshot()
+	cwd, _ := os.Getwd()
+	snap := readSnapshot(resolveSession(cwd))
 	fmt.Fprintln(w, "Cockpit flight plan (FMS)")
 	fmt.Fprintf(w, "  phase:      %s\n", snap.Phase)
 	fmt.Fprintf(w, "  cost index: %s  (COCKPIT_COST_INDEX=eco|normal|perf)\n", snap.CostIndex)
@@ -131,7 +132,7 @@ func RunStatus(w io.Writer, cwd string) {
 	if cwd == "" {
 		cwd, _ = os.Getwd()
 	}
-	snap := readSnapshot()
+	snap := readSnapshot(resolveSession(cwd))
 	st, hasState := readState()
 	fmt.Fprintln(w, "Cockpit STATUS — deferred items")
 	fmt.Fprintln(w)
@@ -162,7 +163,11 @@ func RunStatus(w io.Writer, cwd string) {
 
 // RunDebrief prints a post-session black-box summary.
 func RunDebrief(w io.Writer, session string) {
-	snap := readSnapshot()
+	if session == "" {
+		cwd, _ := os.Getwd()
+		session = resolveSession(cwd)
+	}
+	snap := readSnapshot(session)
 	st, _ := readState()
 	fmt.Fprintln(w, "Cockpit debrief")
 	fmt.Fprintf(w, "  phase:       %s\n", snap.Phase)

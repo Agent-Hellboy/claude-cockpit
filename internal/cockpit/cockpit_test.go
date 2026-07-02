@@ -447,21 +447,100 @@ func TestReadSuggestionsBoundedAndStale(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("CLAUDE_CONFIG_DIR", dir)
 
-	huge := strings.Repeat("x", maxHintBytes+100)
-	if err := os.WriteFile(hintFile(), []byte(huge), 0o644); err != nil {
+	// six lines stored -> capped at 4 for the bar.
+	many := []string{"ADV|1️⃣ a", "ADV|2️⃣ b", "ADV|3️⃣ c", "ADV|4️⃣ d", "ADV|5️⃣ e", "ADV|6️⃣ f"}
+	if err := writeReportLines("sess-a", "/proj/a", many); err != nil {
 		t.Fatal(err)
 	}
-	got := readSuggestions() // no report file -> falls back to the hint file
-	if len(got) != 1 || len(got[0]) != maxHintBytes {
-		t.Fatalf("bounded read: got %d lines, first len=%d want %d", len(got), len(got[0]), maxHintBytes)
+	got := readSuggestions("sess-a")
+	if len(got) != 4 {
+		t.Fatalf("line cap: got %d lines want 4: %v", len(got), got)
+	}
+	if readSuggestions("other-session") != nil {
+		t.Fatalf("another session must not see sess-a's report")
+	}
+	if readSuggestions("") != nil {
+		t.Fatalf("empty session must read nothing")
 	}
 
 	stale := time.Now().Add(-hintMaxAge - time.Minute)
-	if err := os.Chtimes(hintFile(), stale, stale); err != nil {
+	if err := os.Chtimes(sessionReportFile("sess-a"), stale, stale); err != nil {
 		t.Fatal(err)
 	}
-	if got := readSuggestions(); got != nil {
+	if got := readSuggestions("sess-a"); got != nil {
 		t.Fatalf("stale suggestions should be ignored, got %v", got)
+	}
+}
+
+// Regression: suggestions from one session must never surface in another —
+// previously a single global .session-report meant the daemon's last-processed
+// session leaked its advice into every other session's status bar and apply.
+func TestSuggestionSessionIsolation(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", dir)
+
+	if err := writeSuggestionReport("sess-a", "/proj/a", []classifiedSuggestion{
+		{Level: AlertCaut, Text: "🔄 mTLS scenario loop — use /loop"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeSuggestionReport("sess-b", "/proj/b", []classifiedSuggestion{
+		{Level: AlertAdv, Text: "🔍 use graphify query"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	a, b := readSuggestions("sess-a"), readSuggestions("sess-b")
+	if len(a) != 1 || !strings.Contains(a[0], "mTLS") {
+		t.Fatalf("sess-a report wrong: %v", a)
+	}
+	if len(b) != 1 || strings.Contains(b[0], "mTLS") {
+		t.Fatalf("sess-b leaked sess-a's suggestion: %v", b)
+	}
+
+	// snapshots are isolated the same way.
+	writeSnapshot("sess-a", cockpitSnapshot{Cwd: "/proj/a", Phase: "emergency", ContextUsedPct: 95})
+	writeSnapshot("sess-b", cockpitSnapshot{Cwd: "/proj/b", Phase: "cruise", ContextUsedPct: 10})
+	if got := readSnapshot("sess-b"); got.Phase != "cruise" || got.ContextUsedPct != 10 {
+		t.Fatalf("sess-b snapshot polluted: %+v", got)
+	}
+}
+
+func TestResolveSession(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", dir)
+
+	// explicit override wins.
+	t.Setenv("COCKPIT_SESSION", "forced")
+	if got := resolveSession("/proj/a"); got != "forced" {
+		t.Fatalf("COCKPIT_SESSION override ignored: %q", got)
+	}
+	t.Setenv("COCKPIT_SESSION", "")
+
+	// two live sessions in different projects -> cwd picks the right one, and a
+	// third project gets NOTHING rather than someone else's session.
+	if err := writeReportLines("sess-a", "/proj/a", []string{"ADV|🅰️ a"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeReportLines("sess-b", "/proj/b", []string{"ADV|🅱️ b"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := resolveSession("/proj/a"); got != "sess-a" {
+		t.Fatalf("resolveSession(/proj/a)=%q want sess-a", got)
+	}
+	if got := resolveSession("/proj/b"); got != "sess-b" {
+		t.Fatalf("resolveSession(/proj/b)=%q want sess-b", got)
+	}
+	if got := resolveSession("/proj/c"); got != "" {
+		t.Fatalf("ambiguous cwd must resolve to no session, got %q", got)
+	}
+
+	// a single live session is unambiguous from anywhere.
+	if err := os.Remove(sessionReportFile("sess-b")); err != nil {
+		t.Fatal(err)
+	}
+	if got := resolveSession("/proj/c"); got != "sess-a" {
+		t.Fatalf("single live session should resolve from any cwd, got %q", got)
 	}
 }
 
@@ -504,12 +583,17 @@ func TestEnqueueAdvisorJob(t *testing.T) {
 	t.Setenv("CLAUDE_CONFIG_DIR", dir)
 	sigPath := filepath.Join(dir, "s.signals")
 	os.WriteFile(sigPath, []byte("turns=1"), 0o644)
-	if err := enqueueAdvisorJob(sigPath, "sess"); err != nil {
+	if err := enqueueAdvisorJob(sigPath, "sess", "/proj/x"); err != nil {
 		t.Fatal(err)
 	}
 	jobs, _ := filepath.Glob(filepath.Join(jobDir(), "*.job"))
 	if len(jobs) != 1 {
 		t.Fatalf("want 1 job, got %d", len(jobs))
+	}
+	b, _ := os.ReadFile(jobs[0])
+	var j advisorJob
+	if json.Unmarshal(b, &j) != nil || j.Cwd != "/proj/x" {
+		t.Fatalf("job must carry cwd for report stamping: %s", b)
 	}
 }
 
@@ -671,14 +755,15 @@ func TestRenderStatuslineRateLimitFallback(t *testing.T) {
 	}
 }
 
-func TestRunCleanupPreservesCrossSessionState(t *testing.T) {
+func TestRunCleanupRemovesOnlyThisSession(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("CLAUDE_CONFIG_DIR", dir)
 
 	os.WriteFile(stateFile(), []byte(`{"five_h":53,"seven_d":9}`), 0o644)
-	os.WriteFile(snapshotFile(), []byte(`{"phase":"cruise"}`), 0o644)
-	os.WriteFile(hintFile(), []byte("hint"), 0o644)
-	os.WriteFile(reportFile(), []byte("report"), 0o644)
+	writeReportLines("clean-session", "/proj/a", []string{"ADV|🧹 x"})
+	writeSnapshot("clean-session", cockpitSnapshot{Cwd: "/proj/a", Phase: "cruise"})
+	writeReportLines("other-session", "/proj/b", []string{"ADV|🅱️ keep"})
+	writeSnapshot("other-session", cockpitSnapshot{Cwd: "/proj/b", Phase: "cruise"})
 	bumpCounter("clean-session")
 
 	in := stopInput{SessionID: "clean-session"}
@@ -686,16 +771,17 @@ func TestRunCleanupPreservesCrossSessionState(t *testing.T) {
 	RunCleanup(bytes.NewReader(b))
 
 	if _, err := os.Stat(stateFile()); err != nil {
-		t.Errorf("stateFile should survive SessionEnd: %v", err)
+		t.Errorf("stateFile (account-wide rates) should survive SessionEnd: %v", err)
 	}
-	if _, err := os.Stat(snapshotFile()); err != nil {
-		t.Errorf("snapshotFile should survive SessionEnd: %v", err)
+	for _, p := range []string{sessionReportFile("clean-session"), sessionSnapshotFile("clean-session")} {
+		if _, err := os.Stat(p); !os.IsNotExist(err) {
+			t.Errorf("%s should be removed at SessionEnd", p)
+		}
 	}
-	if _, err := os.Stat(hintFile()); !os.IsNotExist(err) {
-		t.Errorf("hintFile should be removed at SessionEnd")
-	}
-	if _, err := os.Stat(reportFile()); !os.IsNotExist(err) {
-		t.Errorf("reportFile should be removed at SessionEnd")
+	for _, p := range []string{sessionReportFile("other-session"), sessionSnapshotFile("other-session")} {
+		if _, err := os.Stat(p); err != nil {
+			t.Errorf("another session's artifact must survive: %s: %v", p, err)
+		}
 	}
 	if matches, _ := filepath.Glob(filepath.Join(cockpitDir(), ".sa-count-*")); len(matches) != 0 {
 		t.Errorf("session counter should be removed, got %v", matches)
@@ -708,8 +794,8 @@ func TestCockpitDirConsolidatesState(t *testing.T) {
 	logsDir := filepath.Join(dir, "cockpit-logs")
 
 	paths := map[string]string{
-		"stateFile": stateFile(), "snapshotFile": snapshotFile(), "chimeStateFile": chimeStateFile(),
-		"hintFile": hintFile(), "reportFile": reportFile(), "debugFile": debugFile(),
+		"stateFile": stateFile(), "snapshotFile": sessionSnapshotFile("s"), "chimeFile": sessionChimeFile("s"),
+		"reportFile": sessionReportFile("s"), "debugFile": debugFile(),
 		"jobDir": jobDir(), "daemonPIDFile": daemonPIDFile(), "daemonLogFile": daemonLogFile(),
 	}
 	for name, got := range paths {
@@ -725,15 +811,19 @@ func TestCockpitDirConsolidatesState(t *testing.T) {
 func TestRemoveSuggestion(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("CLAUDE_CONFIG_DIR", dir)
-	report := "🔍 one\n💰 two\n🔄 three\n"
-	os.WriteFile(reportFile(), []byte(report), 0o644)
-	os.WriteFile(hintFile(), []byte("🔍 one"), 0o644)
-
-	if err := removeSuggestion(2); err != nil {
+	if err := writeReportLines("s", "/proj/a", []string{"🔍 one", "💰 two", "🔄 three"}); err != nil {
 		t.Fatal(err)
 	}
-	got := readSuggestions()
+
+	if err := removeSuggestion("s", 2); err != nil {
+		t.Fatal(err)
+	}
+	got := readSuggestions("s")
 	if len(got) != 2 || got[0] != "🔍 one" || got[1] != "🔄 three" {
 		t.Fatalf("after remove: %v", got)
+	}
+	// the rewritten report must keep its session/cwd stamp for resolveSession.
+	if st, ok := readSessionStamp(sessionReportFile("s")); !ok || st.Cwd != "/proj/a" || st.Session != "s" {
+		t.Fatalf("stamp lost on rewrite: %+v ok=%v", st, ok)
 	}
 }

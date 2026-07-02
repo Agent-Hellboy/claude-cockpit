@@ -1,7 +1,9 @@
 package cockpit
 
 import (
+	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -44,9 +46,95 @@ func cockpitDir() string {
 	return d
 }
 
-func hintFile() string   { return filepath.Join(cockpitDir(), ".model-hint") }
-func reportFile() string { return filepath.Join(cockpitDir(), ".session-report") }
-func debugFile() string  { return filepath.Join(cockpitDir(), ".cockpit-debug.log") }
+func debugFile() string { return filepath.Join(cockpitDir(), ".cockpit-debug.log") }
+
+// legacy pre-session-isolation global files — no longer read or written, removed
+// by cleanup/uninstall so a stale report from another session cannot resurface.
+func legacyHintFile() string   { return filepath.Join(cockpitDir(), ".model-hint") }
+func legacyReportFile() string { return filepath.Join(cockpitDir(), ".session-report") }
+func legacyGlobalFiles() []string {
+	return []string{
+		legacyHintFile(), legacyReportFile(),
+		filepath.Join(cockpitDir(), ".cockpit-snapshot"),
+		filepath.Join(cockpitDir(), ".cockpit-chime-state"),
+	}
+}
+
+// sessionStamp is the identity header every per-session JSON artifact carries so
+// terminal commands can find "their" session by project directory.
+type sessionStamp struct {
+	Session string `json:"session"`
+	Cwd     string `json:"cwd"`
+}
+
+// resolveSession identifies which session a terminal command (list, apply,
+// status, plan, debrief) should read, since the Bash environment carries no
+// session id. Order: explicit COCKPIT_SESSION, the harness's CLAUDE_SESSION_ID
+// if present, else the freshest session artifact stamped with this cwd. When
+// nothing matches the cwd, another project's session is used only if it is the
+// single fresh session at all — with several live sessions, cross-project reads
+// stay isolated and return nothing rather than someone else's suggestions.
+func resolveSession(cwd string) string {
+	if s := os.Getenv("COCKPIT_SESSION"); s != "" {
+		return s
+	}
+	if s := os.Getenv("CLAUDE_SESSION_ID"); s != "" {
+		return s
+	}
+	type cand struct {
+		session, cwd string
+		mod          time.Time
+	}
+	newest := map[string]cand{} // session -> freshest stamp
+	for _, pat := range []string{"*.report", "*.snapshot"} {
+		matches, _ := filepath.Glob(filepath.Join(cockpitDir(), pat))
+		for _, p := range matches {
+			info, err := os.Stat(p)
+			if err != nil || time.Since(info.ModTime()) > hintMaxAge {
+				continue
+			}
+			st, ok := readSessionStamp(p)
+			if !ok || st.Session == "" {
+				continue
+			}
+			if prev, seen := newest[st.Session]; !seen || info.ModTime().After(prev.mod) {
+				newest[st.Session] = cand{st.Session, st.Cwd, info.ModTime()}
+			}
+		}
+	}
+	var best cand
+	for _, c := range newest {
+		if c.cwd == cwd && c.mod.After(best.mod) {
+			best = c
+		}
+	}
+	if best.session != "" {
+		return best.session
+	}
+	if len(newest) == 1 {
+		for _, c := range newest {
+			return c.session
+		}
+	}
+	return ""
+}
+
+func readSessionStamp(path string) (sessionStamp, bool) {
+	f, err := os.Open(path)
+	if err != nil {
+		return sessionStamp{}, false
+	}
+	defer f.Close()
+	b, err := io.ReadAll(io.LimitReader(f, maxHintBytes))
+	if err != nil {
+		return sessionStamp{}, false
+	}
+	var st sessionStamp
+	if json.Unmarshal(b, &st) != nil {
+		return sessionStamp{}, false
+	}
+	return st, true
+}
 
 // stateFile holds the authoritative context/cost/rate snapshot the status line
 // receives from Claude Code, so the Stop-hook analyzer (which is not given that

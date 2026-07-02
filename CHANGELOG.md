@@ -12,6 +12,21 @@ notes, so keep entries user-facing and concise. Add new work under
 ## [Unreleased]
 
 ### Fixed
+- **Suggestions leaked across concurrent sessions.** The advisor stored its
+  report, snapshot, and chime state in single global files, so the daemon's
+  last-processed session pushed its suggestions into every other session's
+  status bar, `cockpit list`, and `apply` — you could see (and apply!) advice
+  computed from a different project's transcript. All advisor state is now
+  per-session (`<session>.report` / `.snapshot` / `.chime`, stamped with the
+  session id and project directory). Terminal commands resolve their session
+  by project directory (`COCKPIT_SESSION` overrides); with several live
+  sessions, a directory that matches none shows nothing rather than someone
+  else's suggestions. The statusline scopes by the payload's `session_id`,
+  context-pressure classification uses the session's own instruments, `apply`
+  reads the session's own signals (not the newest file from any session), and
+  SessionEnd cleanup removes only that session's artifacts. `cockpit list`
+  now names the session it is scoped to.
+
 - **`/cockpit apply <n>` (and any multi-word argument) failed with
   `unknown subcommand "apply 1"`.** The slash command re-expanded the
   substituted `$ARGUMENTS` from a shell variable, and an unquoted `${VAR}`

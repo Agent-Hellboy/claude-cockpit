@@ -101,8 +101,12 @@ func Uninstall() error {
 	_ = os.RemoveAll(filepath.Join(dir, "cockpit-jobs"))
 	if entries, err := os.ReadDir(dir); err == nil {
 		for _, e := range entries {
-			if len(e.Name()) > 10 && e.Name()[:10] == ".sa-count-" {
-				_ = os.Remove(filepath.Join(dir, e.Name()))
+			name := e.Name()
+			transient := strings.HasPrefix(name, ".sa-count-") ||
+				strings.HasSuffix(name, ".report") || strings.HasSuffix(name, ".snapshot") ||
+				strings.HasSuffix(name, ".chime") || strings.HasSuffix(name, ".signals")
+			if transient {
+				_ = os.Remove(filepath.Join(dir, name))
 			}
 		}
 	}

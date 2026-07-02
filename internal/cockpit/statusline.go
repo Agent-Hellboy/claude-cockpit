@@ -18,7 +18,8 @@ const (
 )
 
 type slInput struct {
-	Model struct {
+	SessionID string `json:"session_id"`
+	Model     struct {
 		DisplayName string `json:"display_name"`
 	} `json:"model"`
 	ContextWindow struct {
@@ -60,17 +61,20 @@ type slInput struct {
 	} `json:"pr"`
 }
 
-// RunStatusline reads the status-line JSON from r and writes the rendered bar to w.
+// RunStatusline reads the status-line JSON from r and writes the rendered bar
+// to w. Everything advisor-related is scoped to the payload's session_id, so a
+// concurrent session's suggestions or phase can never bleed into this bar.
 func RunStatusline(r io.Reader, w io.Writer) {
 	data, _ := io.ReadAll(r)
 	var in slInput
 	_ = json.Unmarshal(data, &in)
 	writeState(in)
-	patchSnapshotFromStatusline(in)
-	chime := maybeChime(int(in.ContextWindow.UsedPercentage))
-	snap := readSnapshot()
+	session := in.SessionID
+	patchSnapshotFromStatusline(in, session)
+	chime := maybeChime(session, int(in.ContextWindow.UsedPercentage))
+	snap := readSnapshot(session)
 	st, _ := readState()
-	hints := readSuggestions()
+	hints := readSuggestions(session)
 	classified := parseSuggestionStore(hints, snap, st)
 	if os.Getenv("COCKPIT_DEBUG") != "" {
 		_ = os.WriteFile(filepath.Join(ConfigDir(), ".cockpit-cols"),
@@ -84,11 +88,28 @@ func RunStatusline(r io.Reader, w io.Writer) {
 	}
 }
 
-func patchSnapshotFromStatusline(in slInput) {
+func patchSnapshotFromStatusline(in slInput, session string) {
+	if session == "" {
+		return
+	}
 	ctxPct := int(in.ContextWindow.UsedPercentage)
-	snap := readSnapshot()
+	snap := readSnapshot(session)
 	st, _ := readState()
 	snap.ContextUsedPct = ctxPct
+	// Stamp identity + this session's own context/cost instruments so the
+	// analyzer and terminal commands read THIS session's pressure, not the
+	// globally-last-rendered one.
+	if snap.Cwd == "" {
+		snap.Cwd = in.Workspace.CurrentDir
+		if snap.Cwd == "" {
+			snap.Cwd = in.Cwd
+		}
+	}
+	if in.ContextWindow.ContextWindowSize > 0 {
+		snap.CtxSize = in.ContextWindow.ContextWindowSize
+		snap.CtxTokens = in.ContextWindow.TotalInputTokens
+		snap.CostUSD = in.Cost.TotalCostUSD
+	}
 	fiveH := int(in.RateLimits.FiveHour.UsedPercentage)
 	if fiveH == 0 {
 		fiveH = st.FiveH
@@ -99,7 +120,7 @@ func patchSnapshotFromStatusline(in slInput) {
 	}
 	snap.Rate5hPct = fiveH
 	snap.Rate7dPct = sevenD
-	snap.PendingSuggestions = countApplyable(parseSuggestionStore(readSuggestions(), snap, st))
+	snap.PendingSuggestions = countApplyable(parseSuggestionStore(readSuggestions(session), snap, st))
 	sig := Signals{
 		Turns:          20,
 		ContextUsedPct: ctxPct,
@@ -109,7 +130,7 @@ func patchSnapshotFromStatusline(in slInput) {
 		GraphifyGraph:  snap.GraphifyGraph,
 	}
 	snap.Phase = string(detectPhase(sig, in.PR.ReviewState))
-	writeSnapshot(snap)
+	writeSnapshot(session, snap)
 }
 
 // writeState persists the real context window, fill %, cost, and rate-limit
@@ -138,18 +159,15 @@ func writeState(in slInput) {
 	}
 }
 
-// readSuggestions returns all current suggestion lines (the full session report)
-// so the bar can show every lever, not just the top one. Bounded by size and
-// staleness; falls back to the single hint file if no report exists.
-func readSuggestions() []string {
-	if lines := readLinesBounded(reportFile()); len(lines) > 0 {
-		return lines
+// readSuggestions returns the given session's suggestion lines (the full
+// report) so the bar can show every lever, not just the top one. Bounded by
+// size and staleness. Only that session's report is ever consulted — there is
+// deliberately no global fallback, so another session's advice cannot appear.
+func readSuggestions(session string) []string {
+	if session == "" {
+		return nil
 	}
-	return readLinesBounded(hintFile())
-}
-
-func readLinesBounded(path string) []string {
-	f, err := os.Open(path)
+	f, err := os.Open(sessionReportFile(session))
 	if err != nil {
 		return nil
 	}
@@ -159,11 +177,15 @@ func readLinesBounded(path string) []string {
 	}
 	b, err := io.ReadAll(io.LimitReader(f, maxHintBytes))
 	if err != nil {
-		debugLog("statusline: read %s: %v", path, err)
+		debugLog("statusline: read report for %s: %v", safeSession(session), err)
+		return nil
+	}
+	var rep suggestionReport
+	if json.Unmarshal(b, &rep) != nil {
 		return nil
 	}
 	var out []string
-	for _, ln := range strings.Split(string(b), "\n") {
+	for _, ln := range rep.Lines {
 		if ln = strings.TrimSpace(ln); ln != "" {
 			out = append(out, ln)
 		}

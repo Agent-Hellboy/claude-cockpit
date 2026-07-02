@@ -121,7 +121,11 @@ func main() {
 		if len(os.Args) < 4 {
 			os.Exit(0)
 		}
-		cockpit.RunWorker(os.Args[2], os.Args[3])
+		cwd := ""
+		if len(os.Args) > 4 {
+			cwd = os.Args[4]
+		}
+		cockpit.RunWorker(os.Args[2], os.Args[3], cwd)
 	case "cleanup":
 		cockpit.RunCleanup(os.Stdin)
 	case "install":

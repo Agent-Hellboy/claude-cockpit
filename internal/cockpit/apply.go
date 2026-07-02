@@ -41,14 +41,19 @@ Rules:
 - Never invent API keys. If auth is required, put it in notes.
 - Be minimal: one focused change that matches the suggestion.`
 
-// RunList prints numbered applyable fixes and unnumbered notes.
+// RunList prints numbered applyable fixes and unnumbered notes for the session
+// resolved from the current directory, and names that session so the isolation
+// boundary is visible.
 func RunList(w io.Writer) {
-	lines := readSuggestions()
+	cwd, _ := os.Getwd()
+	session := resolveSession(cwd)
+	lines := readSuggestions(session)
 	if len(lines) == 0 {
-		fmt.Fprintln(w, "No cockpit suggestions right now.")
+		fmt.Fprintln(w, "No cockpit suggestions for this session.")
 		return
 	}
-	snap := readSnapshot()
+	fmt.Fprintf(w, "Session %s\n\n", shortSession(session))
+	snap := readSnapshot(session)
 	st, _ := readState()
 	classified := parseSuggestionStore(lines, snap, st)
 	notes, fixes := partitionSuggestions(classified)
@@ -63,10 +68,21 @@ func RunList(w io.Writer) {
 	}
 }
 
+// shortSession renders a session id compactly for display.
+func shortSession(session string) string {
+	if len(session) > 8 {
+		return session[:8]
+	}
+	if session == "" {
+		return "(unknown)"
+	}
+	return session
+}
+
 // applyableReportLines returns suggestions cockpit apply can act on, in report order.
-func applyableReportLines() []string {
-	lines := readSuggestions()
-	snap := readSnapshot()
+func applyableReportLines(session string) []string {
+	lines := readSuggestions(session)
+	snap := readSnapshot(session)
 	st, _ := readState()
 	var out []string
 	for _, ln := range lines {
@@ -78,12 +94,12 @@ func applyableReportLines() []string {
 }
 
 // applyableReportIndex maps apply number (1-based) to the line index in the full report.
-func applyableReportIndex(n int) (int, error) {
+func applyableReportIndex(session string, n int) (int, error) {
 	if n < 1 {
 		return 0, fmt.Errorf("suggestion number must be >= 1")
 	}
-	lines := readSuggestions()
-	snap := readSnapshot()
+	lines := readSuggestions(session)
+	snap := readSnapshot(session)
 	st, _ := readState()
 	applyN := 0
 	for i, ln := range lines {
@@ -97,21 +113,9 @@ func applyableReportIndex(n int) (int, error) {
 	return 0, fmt.Errorf("only %d applyable fix(es); use cockpit list", applyN)
 }
 
-// RunApply applies applyable fix n (1-based). When yes is false, prompts on stdin.
+// RunApply applies applyable fix n (1-based) from the session resolved for cwd.
+// When yes is false, prompts on stdin.
 func RunApply(n int, cwd string, yes, dryRun bool) error {
-	applyable := applyableReportLines()
-	if n > len(applyable) {
-		if len(applyable) == 0 {
-			return fmt.Errorf("no applyable fixes right now (notes and slash-command reminders are not wired via apply)")
-		}
-		return fmt.Errorf("only %d applyable fix(es); use cockpit list", len(applyable))
-	}
-	reportIdx, err := applyableReportIndex(n)
-	if err != nil {
-		return err
-	}
-	suggestion := stripSeverityPrefix(applyable[n-1])
-
 	if cwd == "" {
 		var err error
 		cwd, err = os.Getwd()
@@ -119,8 +123,21 @@ func RunApply(n int, cwd string, yes, dryRun bool) error {
 			return err
 		}
 	}
+	session := resolveSession(cwd)
+	applyable := applyableReportLines(session)
+	if n > len(applyable) {
+		if len(applyable) == 0 {
+			return fmt.Errorf("no applyable fixes for this session (notes and slash-command reminders are not wired via apply)")
+		}
+		return fmt.Errorf("only %d applyable fix(es); use cockpit list", len(applyable))
+	}
+	reportIdx, err := applyableReportIndex(session, n)
+	if err != nil {
+		return err
+	}
+	suggestion := stripSeverityPrefix(applyable[n-1])
 
-	signals := readLatestSignals()
+	signals := readSessionSignals(session)
 	prompt := applyInstr + "\n\nSUGGESTION:\n" + suggestion
 	if signals != "" {
 		prompt += "\n\nSIGNALS:\n" + signals
@@ -173,7 +190,7 @@ func RunApply(n int, cwd string, yes, dryRun bool) error {
 	if err := executePlan(cwd, suggestion, plan); err != nil {
 		return err
 	}
-	if err := removeSuggestion(reportIdx); err != nil {
+	if err := removeSuggestion(session, reportIdx); err != nil {
 		debugLog("apply: remove suggestion %d: %v", reportIdx, err)
 	}
 	fmt.Println("\033[32mApplied.\033[0m Restart Claude Code or run /hooks if MCP servers were added.")
@@ -302,50 +319,30 @@ func writeSkill(cwd, name, content string) error {
 	return os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte(strings.TrimSpace(content)+"\n"), 0o644)
 }
 
-func readLatestSignals() string {
-	entries, err := os.ReadDir(logDir())
-	if err != nil {
+// readSessionSignals returns the resolved session's own signals — never another
+// session's, which is what the old newest-file-wins scan did.
+func readSessionSignals(session string) string {
+	if session == "" {
 		return ""
 	}
-	var best string
-	var bestTime int64
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".signals") {
-			continue
-		}
-		info, err := e.Info()
-		if err != nil {
-			continue
-		}
-		if info.ModTime().Unix() >= bestTime {
-			bestTime = info.ModTime().Unix()
-			best = filepath.Join(logDir(), e.Name())
-		}
-	}
-	if best == "" {
-		return ""
-	}
-	b, err := os.ReadFile(best)
+	b, err := os.ReadFile(sessionSignalsFile(session))
 	if err != nil {
 		return ""
 	}
 	return string(b)
 }
 
-// removeSuggestion drops line n (1-based) from the session report.
-func removeSuggestion(n int) error {
-	lines := readSuggestions()
+// removeSuggestion drops line n (1-based) from the session's report.
+func removeSuggestion(session string, n int) error {
+	lines := readSuggestions(session)
 	if n < 1 || n > len(lines) {
 		return nil
 	}
 	lines = append(lines[:n-1], lines[n:]...)
 	if len(lines) == 0 {
-		_ = os.Remove(reportFile())
-		_ = os.Remove(hintFile())
+		_ = os.Remove(sessionReportFile(session))
 		return nil
 	}
-	if err := os.WriteFile(reportFile(), []byte(strings.Join(lines, "\n")+"\n"), 0o644); err != nil {
-		return err
-	}
-	return os.WriteFile(hintFile(), []byte(lines[0]), 0o644)
+	st, _ := readSessionStamp(sessionReportFile(session))
+	return writeReportLines(session, st.Cwd, lines)
 }

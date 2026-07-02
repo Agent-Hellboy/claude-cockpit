@@ -1,6 +1,7 @@
 package cockpit
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -291,16 +292,29 @@ func parseSignalInt(sig, key string) int {
 	return v
 }
 
-func writeSuggestionReport(lines []classifiedSuggestion) error {
-	if len(lines) == 0 {
+// suggestionReport is the per-session suggestion store. The session/cwd stamp
+// is what lets `cockpit list`/`apply` in a terminal find the right session, and
+// what keeps one session's advice out of another session's status bar.
+type suggestionReport struct {
+	sessionStamp
+	Lines []string `json:"lines"`
+}
+
+func writeSuggestionReport(session, cwd string, lines []classifiedSuggestion) error {
+	if len(lines) == 0 || session == "" {
 		return nil
 	}
 	texts := make([]string, len(lines))
 	for i, l := range lines {
 		texts[i] = l.Level.String() + "|" + l.Text
 	}
-	if err := os.WriteFile(reportFile(), []byte(strings.Join(texts, "\n")+"\n"), 0o644); err != nil {
+	return writeReportLines(session, cwd, texts)
+}
+
+func writeReportLines(session, cwd string, texts []string) error {
+	b, err := json.Marshal(suggestionReport{sessionStamp{session, cwd}, texts})
+	if err != nil {
 		return err
 	}
-	return os.WriteFile(hintFile(), []byte(lines[0].Text), 0o644)
+	return os.WriteFile(sessionReportFile(session), b, 0o644)
 }

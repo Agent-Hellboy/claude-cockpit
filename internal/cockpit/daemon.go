@@ -17,9 +17,13 @@ import (
 )
 
 // advisorJob is queued for the persistent cockpit daemon (ECAM computer).
+// Cwd travels with the job so the worker stamps the resulting report with the
+// project it came from — the daemon serves every session, so a job must never
+// lose track of whose suggestions it is producing.
 type advisorJob struct {
 	Session     string `json:"session"`
 	SignalsPath string `json:"signals_path"`
+	Cwd         string `json:"cwd"`
 }
 
 func daemonPIDFile() string { return filepath.Join(cockpitDir(), ".cockpit-daemon.pid") }
@@ -156,7 +160,11 @@ func daemonLog(format string, args ...any) {
 	_, _ = f.WriteString(msg)
 }
 
-// acquisitionLoop is the data-acquisition LRU — keeps instrument snapshot fresh.
+// acquisitionLoop is the data-acquisition LRU — keeps instrument snapshots
+// fresh. Only account-wide rate limits are fanned out to every live session's
+// snapshot; context fill is per-session and owned by that session's statusline,
+// so it is deliberately NOT patched here (doing so used to leak one session's
+// context pressure into another's alert classification).
 func acquisitionLoop(ctx context.Context) {
 	tick := time.NewTicker(3 * time.Second)
 	defer tick.Stop()
@@ -169,13 +177,31 @@ func acquisitionLoop(ctx context.Context) {
 			if !ok {
 				continue
 			}
-			snap := readSnapshot()
-			snap.ContextUsedPct = st.CtxPct
-			snap.Rate5hPct = st.FiveH
-			snap.Rate7dPct = st.SevenD
-			writeSnapshot(snap)
+			for _, session := range liveSessionSnapshots() {
+				snap := readSnapshot(session)
+				snap.Rate5hPct = st.FiveH
+				snap.Rate7dPct = st.SevenD
+				writeSnapshot(session, snap)
+			}
 		}
 	}
+}
+
+// liveSessionSnapshots returns the session ids of snapshot files fresh enough
+// to belong to a session that may still be running.
+func liveSessionSnapshots() []string {
+	matches, _ := filepath.Glob(filepath.Join(cockpitDir(), "*.snapshot"))
+	var out []string
+	for _, p := range matches {
+		info, err := os.Stat(p)
+		if err != nil || time.Since(info.ModTime()) > hintMaxAge {
+			continue
+		}
+		if st, ok := readSessionStamp(p); ok && st.Session != "" {
+			out = append(out, st.Session)
+		}
+	}
+	return out
 }
 
 // advisorLoop is the ECAM alerting LRU — processes queued advisor jobs one at a time.
@@ -192,7 +218,7 @@ func advisorLoop(ctx context.Context) {
 				continue
 			}
 			daemonLog("daemon: advisor job session=%s", job.Session)
-			RunWorker(job.SignalsPath, job.Session)
+			RunWorker(job.SignalsPath, job.Session, job.Cwd)
 			_ = os.Remove(path)
 		}
 	}
@@ -227,13 +253,13 @@ func nextJob() (advisorJob, string, bool) {
 	return j, path, true
 }
 
-func enqueueAdvisorJob(signalsPath, session string) error {
+func enqueueAdvisorJob(signalsPath, session, cwd string) error {
 	if err := os.MkdirAll(jobDir(), 0o755); err != nil {
 		return err
 	}
 	name := fmt.Sprintf("%s-%d.job", sessionKey(session), time.Now().UnixNano())
 	path := filepath.Join(jobDir(), name)
-	b, err := json.Marshal(advisorJob{Session: session, SignalsPath: signalsPath})
+	b, err := json.Marshal(advisorJob{Session: session, SignalsPath: signalsPath, Cwd: cwd})
 	if err != nil {
 		return err
 	}
@@ -241,7 +267,7 @@ func enqueueAdvisorJob(signalsPath, session string) error {
 }
 
 // dispatchAdvisor sends work to the daemon queue, or spawns a one-shot worker.
-func dispatchAdvisor(signals, session string) {
+func dispatchAdvisor(signals, session, cwd string) {
 	if err := os.MkdirAll(logDir(), 0o755); err != nil {
 		logf(session, "dispatchAdvisor: mkdir logs: %v", err)
 		return
@@ -252,24 +278,24 @@ func dispatchAdvisor(signals, session string) {
 		return
 	}
 	if isDaemonRunning() {
-		if err := enqueueAdvisorJob(sigPath, session); err != nil {
+		if err := enqueueAdvisorJob(sigPath, session, cwd); err != nil {
 			logf(session, "dispatchAdvisor: enqueue failed: %v — fallback worker", err)
-			spawnOneShotWorker(sigPath, session)
+			spawnOneShotWorker(sigPath, session, cwd)
 			return
 		}
 		logf(session, "dispatchAdvisor: queued for daemon")
 		return
 	}
-	spawnOneShotWorker(sigPath, session)
+	spawnOneShotWorker(sigPath, session, cwd)
 }
 
-func spawnOneShotWorker(sigPath, session string) {
+func spawnOneShotWorker(sigPath, session, cwd string) {
 	exe, err := os.Executable()
 	if err != nil {
 		logf(session, "spawnWorker: executable: %v", err)
 		return
 	}
-	cmd := exec.Command(exe, "worker", sigPath, session)
+	cmd := exec.Command(exe, "worker", sigPath, session, cwd)
 	cmd.Env = append(os.Environ(), "MODEL_HINT_GUARD=1")
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if null, err := os.OpenFile(os.DevNull, os.O_RDWR, 0); err == nil {

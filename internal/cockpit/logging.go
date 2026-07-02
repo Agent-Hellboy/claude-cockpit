@@ -36,6 +36,22 @@ func sessionSignalsFile(session string) string {
 	return filepath.Join(logDir(), safeSession(session)+".signals")
 }
 
+// Per-session advisor artifacts. Suggestions, phase snapshot, and chime state
+// describe ONE session's instruments — sharing them across concurrent sessions
+// leaked another session's suggestions into this one's status bar. Only truly
+// account-wide data (.cockpit-state rate limits) stays global.
+func sessionReportFile(session string) string {
+	return filepath.Join(logDir(), safeSession(session)+".report")
+}
+
+func sessionSnapshotFile(session string) string {
+	return filepath.Join(logDir(), safeSession(session)+".snapshot")
+}
+
+func sessionChimeFile(session string) string {
+	return filepath.Join(logDir(), safeSession(session)+".chime")
+}
+
 // logf appends a timestamped line to the session's log file. Always on (this is
 // the durable record the user asked for); failures are swallowed.
 func logf(session, format string, args ...any) {

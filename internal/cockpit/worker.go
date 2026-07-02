@@ -72,11 +72,11 @@ phrased as an audit-first suggestion. Example:
 🔌 Audit Playwright MCP for live browser control + screenshots — https://github.com/microsoft/playwright-mcp
 If you cannot find a credible match, reply with an empty line.`
 
-// RunWorker reads signals for a session and writes suggestions to the report +
-// hint files. Two phases: (1) a fast local advisor; (2) only if that flags a
-// TOOLGAP, a focused web search for a concrete tool. Falls back to reversionary
-// rule-based hints if haiku is unavailable or returns nothing.
-func RunWorker(sigPath, session string) {
+// RunWorker reads signals for a session and writes suggestions to that
+// session's report. Two phases: (1) a fast local advisor; (2) only if that
+// flags a TOOLGAP, a focused web search for a concrete tool. Falls back to
+// reversionary rule-based hints if haiku is unavailable or returns nothing.
+func RunWorker(sigPath, session, cwd string) {
 	sig, err := os.ReadFile(sigPath)
 	if err != nil {
 		logf(session, "worker: read signals %s: %v", sigPath, err)
@@ -120,7 +120,7 @@ func RunWorker(sigPath, session string) {
 			logf(session, "worker: no suggestion lines — reversionary mode")
 			classified = ruleBasedSuggestions(string(sig))
 		} else {
-			snap := readSnapshot()
+			snap := readSnapshot(session)
 			st, _ := readState()
 			classified = make([]classifiedSuggestion, 0, len(lines))
 			for _, ln := range lines {
@@ -133,13 +133,16 @@ func RunWorker(sigPath, session string) {
 		logf(session, "worker: no suggestion lines produced")
 		return
 	}
-	if err := writeSuggestionReport(classified); err != nil {
+	if err := writeSuggestionReport(session, cwd, classified); err != nil {
 		logf(session, "worker: write report: %v", err)
 	}
-	snap := readSnapshot()
+	snap := readSnapshot(session)
 	snap.AdvisorOK = !reversionary
 	snap.PendingSuggestions = countApplyable(classified)
-	writeSnapshot(snap)
+	if snap.Cwd == "" {
+		snap.Cwd = cwd
+	}
+	writeSnapshot(session, snap)
 	logf(session, "worker: wrote %d suggestion line(s); top=%q", len(classified), classified[0].Text)
 }
 
