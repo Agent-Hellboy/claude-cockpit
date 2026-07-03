@@ -75,7 +75,7 @@ func RunStatusline(r io.Reader, w io.Writer) {
 	snap := readSnapshot(session)
 	st, _ := readState()
 	hints := readSuggestions(session)
-	classified := parseSuggestionStore(hints, snap, st)
+	classified := parseSuggestionStore(hints, reportAge(session), snap, st)
 	if os.Getenv("COCKPIT_DEBUG") != "" {
 		_ = os.WriteFile(filepath.Join(ConfigDir(), ".cockpit-cols"),
 			[]byte(fmt.Sprintf("COLUMNS=%q -> termCols=%d\n", os.Getenv("COLUMNS"), termCols())), 0o644)
@@ -120,7 +120,7 @@ func patchSnapshotFromStatusline(in slInput, session string) {
 	}
 	snap.Rate5hPct = fiveH
 	snap.Rate7dPct = sevenD
-	snap.PendingSuggestions = countApplyable(parseSuggestionStore(readSuggestions(session), snap, st))
+	snap.PendingSuggestions = countApplyable(parseSuggestionStore(readSuggestions(session), reportAge(session), snap, st))
 	sig := Signals{
 		Turns:          20,
 		ContextUsedPct: ctxPct,
@@ -157,6 +157,20 @@ func writeState(in slInput) {
 	if b, err := json.Marshal(st); err == nil {
 		_ = os.WriteFile(stateFile(), b, 0o644)
 	}
+}
+
+// reportAge is how long ago the advisor last (re)wrote the session's report —
+// i.e. the age of every non-applyable note in it, since notes are regenerated
+// wholesale on each run.
+func reportAge(session string) time.Duration {
+	if session == "" {
+		return 0
+	}
+	info, err := os.Stat(sessionReportFile(session))
+	if err != nil {
+		return 0
+	}
+	return time.Since(info.ModTime())
 }
 
 // readSuggestions returns the given session's suggestion lines (the full

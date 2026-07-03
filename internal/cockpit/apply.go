@@ -55,7 +55,7 @@ func RunList(w io.Writer) {
 	fmt.Fprintf(w, "Session %s\n\n", shortSession(session))
 	snap := readSnapshot(session)
 	st, _ := readState()
-	classified := parseSuggestionStore(lines, snap, st)
+	classified := parseSuggestionStore(lines, reportAge(session), snap, st)
 	notes, fixes := partitionSuggestions(classified)
 	for i, c := range fixes {
 		fmt.Fprintf(w, "[%d] %s %s\n", i+1, c.Level.Display(), c.Text)

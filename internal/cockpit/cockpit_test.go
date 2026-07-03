@@ -725,25 +725,58 @@ func TestStaleBudgetSuggestionExpires(t *testing.T) {
 
 	// (b) window reset: 5h now 3% -> the stored line is dropped at read time.
 	fresh := cockpitSnapshot{Rate5hPct: 3, Rate7dPct: 32, ContextUsedPct: 51}
-	got := parseSuggestionStore([]string{line}, fresh, cockpitState{})
+	got := parseSuggestionStore([]string{line}, 0, fresh, cockpitState{})
 	if len(got) != 0 {
 		t.Fatalf("stale 97%% claim should be dropped at 5h=3%%: %v", got)
 	}
 
 	// still under pressure -> the line stays.
 	hot := cockpitSnapshot{Rate5hPct: 96, Rate7dPct: 40}
-	if got := parseSuggestionStore([]string{line}, hot, cockpitState{}); len(got) != 1 {
+	if got := parseSuggestionStore([]string{line}, 0, hot, cockpitState{}); len(got) != 1 {
 		t.Fatalf("valid pressure warn must survive: %v", got)
 	}
 
 	// context claims expire the same way; low-percent lines never do.
 	ctxLine := "WARN|⚠️ Context at 92% — run /compact now"
-	if got := parseSuggestionStore([]string{ctxLine}, cockpitSnapshot{ContextUsedPct: 12}, cockpitState{}); len(got) != 0 {
+	if got := parseSuggestionStore([]string{ctxLine}, 0, cockpitSnapshot{ContextUsedPct: 12}, cockpitState{}); len(got) != 0 {
 		t.Fatalf("stale ctx claim should be dropped: %v", got)
 	}
 	benign := "ADV|🔍 502 source files with no graphify graph built; 181 searches logged (up 20%)"
-	if got := parseSuggestionStore([]string{benign}, fresh, cockpitState{}); len(got) != 1 {
+	if got := parseSuggestionStore([]string{benign}, 0, fresh, cockpitState{}); len(got) != 1 {
 		t.Fatalf("non-pressure line must survive: %v", got)
+	}
+}
+
+// The expiry rule is disagreement with live gauges, not an absolute threshold:
+// "rate climbing to 73% in 5h" must vanish after the window resets to 3%, stay
+// while the gauge is near 73%, and notes without any claim age out on TTL.
+func TestMidPressureClaimAndNoteTTL(t *testing.T) {
+	climb := "CAUT|📈 Rate climbing to 73% in 5h — 15 searches + 26 Bash calls; if the next 2h shows similar velocity, switch to Sonnet to stretch the budget."
+
+	// gauge agrees (within tolerance) -> stays.
+	if got := parseSuggestionStore([]string{climb}, 0, cockpitSnapshot{Rate5hPct: 68}, cockpitState{}); len(got) != 1 {
+		t.Fatalf("agreeing 73%% claim must survive at 5h=68%%: %v", got)
+	}
+	// window reset -> dropped, even though 73 < the old 75 threshold.
+	if got := parseSuggestionStore([]string{climb}, 0, cockpitSnapshot{Rate5hPct: 3}, cockpitState{}); len(got) != 0 {
+		t.Fatalf("73%% claim must be dropped at 5h=3%%: %v", got)
+	}
+	// pressure ROSE well past the claim -> also dropped (advisor will rewarn).
+	if got := parseSuggestionStore([]string{climb}, 0, cockpitSnapshot{Rate5hPct: 97}, cockpitState{}); len(got) != 0 {
+		t.Fatalf("under-warning 73%% claim must be dropped at 5h=97%%: %v", got)
+	}
+
+	// claim-free note: fresh -> shown; older than noteMaxAge -> aged out, while
+	// a standing applyable fix of the same age survives.
+	note := "CAUT|🔍 Bash dominates with 438 calls; consider /debug for the failing scenario"
+	fix := "ADV|🔌 Audit Playwright MCP for the UI checks — https://github.com/microsoft/playwright-mcp"
+	snap := cockpitSnapshot{Rate5hPct: 40}
+	if got := parseSuggestionStore([]string{note, fix}, time.Minute, snap, cockpitState{}); len(got) != 2 {
+		t.Fatalf("fresh note+fix: got %v", got)
+	}
+	got := parseSuggestionStore([]string{note, fix}, noteMaxAge+time.Minute, snap, cockpitState{})
+	if len(got) != 1 || !strings.Contains(got[0].Text, "Playwright") {
+		t.Fatalf("aged store must keep only the standing fix: %v", got)
 	}
 }
 

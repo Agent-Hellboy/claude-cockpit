@@ -43,14 +43,18 @@ notes, so keep entries user-facing and concise. Add new work under
   and classified as an advisory.
 
 ### Fixed
-- **Stale budget warning outlived the 5-hour window reset.** A suggestion like
-  "5-hour budget at 97%" mentioned subagents, so it classified as an applyable
-  standing fix and kept showing next to a fresh `5h 3%` gauge after the window
-  rolled over. Budget/rate pressure lines are now instrument warnings (never
-  standing fixes, regenerated each advisor run), and every stored suggestion is
-  revalidated against live gauges on render — a pressure claim of ≥75% is
-  dropped the moment the actual instrument reads cool. No manual refresh
-  needed; the bar self-heals on its next render.
+- **Stale advisor notes outlived the conditions they described.** A "5-hour
+  budget at 97%" line kept showing next to a fresh `5h 3%` gauge after the
+  window rolled over, and "rate climbing to 73%" survived any threshold rule.
+  Freshness is now enforced by design, in three layers: (1) budget/rate
+  pressure phrasings classify as instrument warnings, never standing applyable
+  fixes; (2) every stored suggestion is revalidated against the live gauges on
+  each render — a percentage claim (≥50%) that misses the matching gauge
+  (5h/7d/context) by more than 20 points in either direction is dropped; and
+  (3) non-applyable notes age out 30 minutes after the advisor last wrote them,
+  since they describe a moment, while standing fixes (tool audits) persist
+  until applied. The bar, `cockpit list`, and the stored report all self-heal
+  with no manual refresh.
 - **Debrief showed another session's context/cost.** It now prefers the
   session's own snapshot instruments over the globally-last-written state.
 

@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // AlertLevel mirrors EICAS/ECAM crew alerting severity.
@@ -130,11 +131,20 @@ func parseSeverityPrefix(s string) (AlertLevel, string, bool) {
 	return AlertAdv, s, false
 }
 
-func parseSuggestionStore(raw []string, snap cockpitSnapshot, st cockpitState) []classifiedSuggestion {
+// noteMaxAge is how long a non-applyable instrument note stays presentable.
+// Notes describe a moment ("15 searches so far, rate climbing"); the worker
+// rewrites them on every advisor run, so the report's age IS the notes' age.
+// Standing applyable fixes are exempt — they persist until applied.
+const noteMaxAge = 30 * time.Minute
+
+func parseSuggestionStore(raw []string, age time.Duration, snap cockpitSnapshot, st cockpitState) []classifiedSuggestion {
 	out := make([]classifiedSuggestion, 0, len(raw))
 	for _, ln := range raw {
 		c := classifySuggestion(ln, snap, st)
 		if staleInstrumentClaim(c.Text, snap) {
+			continue
+		}
+		if age > noteMaxAge && !isApplyable(c) {
 			continue
 		}
 		out = append(out, c)
@@ -145,12 +155,18 @@ func parseSuggestionStore(raw []string, snap cockpitSnapshot, st cockpitState) [
 
 var pctClaimRe = regexp.MustCompile(`(\d{1,3})%`)
 
+// claimTolerance is how far a cited percentage may drift from the live gauge
+// before the suggestion no longer describes this world.
+const claimTolerance = 20
+
 // staleInstrumentClaim reports whether a stored suggestion cites instrument
-// pressure that today's gauges contradict — e.g. "5-hour budget at 97%" after
-// the 5h window reset to 3%. Such lines are advisor output from an earlier
-// state of the world; showing them next to fresh gauges reads as a broken bar.
-// The current snapshot is authoritative because the statusline re-patches it on
-// every render.
+// pressure that today's gauges contradict — e.g. "5-hour budget at 97%" (or
+// "rate climbing to 73% in 5h") after the window reset to 3%. The rule is
+// disagreement, not absolute level: a claim ≥50% that misses the live gauge by
+// more than claimTolerance in either direction is advisor output from an
+// earlier state of the world, and showing it next to fresh gauges reads as a
+// broken bar. The snapshot is authoritative because the statusline re-patches
+// it on every render.
 func staleInstrumentClaim(text string, snap cockpitSnapshot) bool {
 	lower := strings.ToLower(text)
 	m := pctClaimRe.FindStringSubmatch(lower)
@@ -158,15 +174,23 @@ func staleInstrumentClaim(text string, snap cockpitSnapshot) bool {
 		return false
 	}
 	claimed, _ := strconv.Atoi(m[1])
-	if claimed < 75 {
-		return false // only pressure claims can go stale
+	if claimed < 50 {
+		return false // low percentages are rhetoric ("30% cheaper"), not pressure
+	}
+	off := func(actual int) bool {
+		d := claimed - actual
+		return d > claimTolerance || d < -claimTolerance
 	}
 	switch {
-	case strings.Contains(lower, "5-hour") || strings.Contains(lower, "5h") ||
-		strings.Contains(lower, "budget") || strings.Contains(lower, "rate"):
-		return snap.Rate5hPct < 60 && snap.Rate7dPct < 60
+	case strings.Contains(lower, "5-hour") || strings.Contains(lower, "5h"):
+		return off(snap.Rate5hPct)
+	case strings.Contains(lower, "7-day") || strings.Contains(lower, "7d"):
+		return off(snap.Rate7dPct)
+	case strings.Contains(lower, "budget") || strings.Contains(lower, "rate"):
+		// unspecified window: live if EITHER gauge matches the claim.
+		return off(snap.Rate5hPct) && off(snap.Rate7dPct)
 	case strings.Contains(lower, "context") || strings.Contains(lower, "ctx"):
-		return snap.ContextUsedPct < 50
+		return off(snap.ContextUsedPct)
 	}
 	return false
 }
