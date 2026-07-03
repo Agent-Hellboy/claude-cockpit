@@ -264,6 +264,12 @@ func slashCommandPath() string {
 // word-splits in bash but NOT in zsh (macOS default), which previously collapsed
 // `apply 1` into a single argument and produced `unknown subcommand "apply 1"`.
 // Passing the tokens as positionals splits identically in every POSIX shell.
+//
+// CRITICAL: the template must not contain $1..$9 anywhere — Claude Code
+// substitutes those placeholders with the slash command's own arguments even
+// inside single quotes (a previous `b=$1; shift` became `b=1; shift`). The
+// binary path is therefore bound to $0 via `sh -c 'script' <path>`, which the
+// substitution leaves alone (only $ARGUMENTS and $1-$9 are rewritten).
 const cockpitCommandMD = "---\n" +
 	"description: Manage claude-cockpit — synoptic, status, suggestions, apply, daemon\n" +
 	"argument-hint: \"[systems | status | list | apply <n> | checklist <topic> | plan | debrief | daemon status]\"\n" +
@@ -272,7 +278,7 @@ const cockpitCommandMD = "---\n" +
 	"Run the cockpit control below, then explain the output plainly to the user:\n" +
 	"summarize what each section means, call out anything in the warning/caution\n" +
 	"colors first, and if they asked to `apply <n>` state exactly what changed.\n\n" +
-	"!`sh -c 'b=$1; shift; if [ \"$#\" -eq 0 ]; then exec \"$b\" systems; else exec \"$b\" \"$@\"; fi' cockpit {{EXE}} $ARGUMENTS 2>&1`\n"
+	"!`sh -c 'if [ \"$#\" -eq 0 ]; then exec \"$0\" systems; else COCKPIT_ASSUME_YES=1 exec \"$0\" \"$@\"; fi' {{EXE}} $ARGUMENTS 2>&1`\n"
 
 func writeSlashCommand(exe string) error {
 	path := slashCommandPath()

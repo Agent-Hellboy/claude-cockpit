@@ -176,6 +176,15 @@ func RunApply(n int, cwd string, yes, dryRun bool) error {
 		fmt.Println("Dry run — no changes made.")
 		return nil
 	}
+	// The /cockpit slash command has no interactive stdin: the y/N prompt
+	// would read EOF and silently cancel every apply. The command template
+	// declares that explicitly via COCKPIT_ASSUME_YES=1 (env, not a TTY
+	// heuristic — /dev/null is a char device and fools isatty-style checks).
+	// The plan was just printed and its actions are safelisted.
+	if !yes && os.Getenv("COCKPIT_ASSUME_YES") == "1" {
+		fmt.Println("Non-interactive session — applying without prompt (use --dry-run to preview).")
+		yes = true
+	}
 	if !yes {
 		fmt.Print("Apply this fix? [y/N]: ")
 		reader := bufio.NewReader(os.Stdin)

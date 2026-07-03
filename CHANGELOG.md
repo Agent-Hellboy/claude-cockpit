@@ -43,6 +43,18 @@ notes, so keep entries user-facing and concise. Add new work under
   and classified as an advisory.
 
 ### Fixed
+- **`/cockpit apply <n>` broke again — and could never actually apply.** Two
+  bugs: (1) Claude Code substitutes `$1`-`$9` placeholders inside a slash
+  command's shell line even within single quotes, which clobbered the previous
+  fix's `b=$1` into `b=1` (`exec: 1: not found`); the binary path is now bound
+  to `$0` via `sh -c '…' <path>`, which substitution leaves alone. (2) The
+  slash command has no interactive stdin, so apply's y/N prompt read EOF and
+  silently cancelled every time; the command template now declares
+  non-interactivity via `COCKPIT_ASSUME_YES=1` (an env contract, not an isatty
+  heuristic — `/dev/null` is a char device and fools those) and apply
+  auto-confirms after printing the plan. Verified end-to-end: `/cockpit apply
+  1` plans, applies, writes CLAUDE.md, and consumes the suggestion. Re-run
+  `cockpit install` to regenerate the slash command.
 - **Stale advisor notes outlived the conditions they described.** A "5-hour
   budget at 97%" line kept showing next to a fresh `5h 3%` gauge after the
   window rolled over, and "rate climbing to 73%" survived any threshold rule.
