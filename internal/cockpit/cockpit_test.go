@@ -711,6 +711,42 @@ func TestResolveSession(t *testing.T) {
 	}
 }
 
+// Regression: a suggestion citing 5h-budget pressure was classified as an
+// applyable standing fix (it mentioned "subagents"), so it kept showing at
+// "97%" long after the 5-hour window reset to 3%. Budget/rate pressure must
+// (a) never be a standing fix and (b) be dropped when gauges contradict it.
+func TestStaleBudgetSuggestionExpires(t *testing.T) {
+	line := "WARN|⚠️ 5-hour budget at 97% — you've spent $170.06 and are near the limit; switch to Haiku for subagents or delegation now, or focus on wrapping up before you hit the ceiling."
+
+	// (a) not applyable — it is an instrument warning, regenerated each run.
+	if isApplyable(classifySuggestion(line, cockpitSnapshot{}, cockpitState{})) {
+		t.Fatal("budget-pressure line must not be a standing applyable fix")
+	}
+
+	// (b) window reset: 5h now 3% -> the stored line is dropped at read time.
+	fresh := cockpitSnapshot{Rate5hPct: 3, Rate7dPct: 32, ContextUsedPct: 51}
+	got := parseSuggestionStore([]string{line}, fresh, cockpitState{})
+	if len(got) != 0 {
+		t.Fatalf("stale 97%% claim should be dropped at 5h=3%%: %v", got)
+	}
+
+	// still under pressure -> the line stays.
+	hot := cockpitSnapshot{Rate5hPct: 96, Rate7dPct: 40}
+	if got := parseSuggestionStore([]string{line}, hot, cockpitState{}); len(got) != 1 {
+		t.Fatalf("valid pressure warn must survive: %v", got)
+	}
+
+	// context claims expire the same way; low-percent lines never do.
+	ctxLine := "WARN|⚠️ Context at 92% — run /compact now"
+	if got := parseSuggestionStore([]string{ctxLine}, cockpitSnapshot{ContextUsedPct: 12}, cockpitState{}); len(got) != 0 {
+		t.Fatalf("stale ctx claim should be dropped: %v", got)
+	}
+	benign := "ADV|🔍 502 source files with no graphify graph built; 181 searches logged (up 20%)"
+	if got := parseSuggestionStore([]string{benign}, fresh, cockpitState{}); len(got) != 1 {
+		t.Fatalf("non-pressure line must survive: %v", got)
+	}
+}
+
 func TestAlertClassification(t *testing.T) {
 	snap := cockpitSnapshot{ContextUsedPct: 92}
 	c := classifySuggestion("📦 consider compact", snap, cockpitState{})

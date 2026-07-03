@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -132,10 +133,42 @@ func parseSeverityPrefix(s string) (AlertLevel, string, bool) {
 func parseSuggestionStore(raw []string, snap cockpitSnapshot, st cockpitState) []classifiedSuggestion {
 	out := make([]classifiedSuggestion, 0, len(raw))
 	for _, ln := range raw {
-		out = append(out, classifySuggestion(ln, snap, st))
+		c := classifySuggestion(ln, snap, st)
+		if staleInstrumentClaim(c.Text, snap) {
+			continue
+		}
+		out = append(out, c)
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].Level < out[j].Level })
 	return out
+}
+
+var pctClaimRe = regexp.MustCompile(`(\d{1,3})%`)
+
+// staleInstrumentClaim reports whether a stored suggestion cites instrument
+// pressure that today's gauges contradict — e.g. "5-hour budget at 97%" after
+// the 5h window reset to 3%. Such lines are advisor output from an earlier
+// state of the world; showing them next to fresh gauges reads as a broken bar.
+// The current snapshot is authoritative because the statusline re-patches it on
+// every render.
+func staleInstrumentClaim(text string, snap cockpitSnapshot) bool {
+	lower := strings.ToLower(text)
+	m := pctClaimRe.FindStringSubmatch(lower)
+	if m == nil {
+		return false
+	}
+	claimed, _ := strconv.Atoi(m[1])
+	if claimed < 75 {
+		return false // only pressure claims can go stale
+	}
+	switch {
+	case strings.Contains(lower, "5-hour") || strings.Contains(lower, "5h") ||
+		strings.Contains(lower, "budget") || strings.Contains(lower, "rate"):
+		return snap.Rate5hPct < 60 && snap.Rate7dPct < 60
+	case strings.Contains(lower, "context") || strings.Contains(lower, "ctx"):
+		return snap.ContextUsedPct < 50
+	}
+	return false
 }
 
 // partitionSuggestions splits informational notes from fixes cockpit apply can wire up.
@@ -164,6 +197,11 @@ func isApplyable(c classifiedSuggestion) bool {
 		"run /model", "switch /model", "switch to a cheaper model",
 		"switch /model down", "rate limit hot", "context critical",
 		"context high — run /context", "context high — consider /compact",
+		// budget/rate pressure is an instrument condition, not a wireable fix:
+		// it must regenerate fresh each advisor run and vanish when the window
+		// resets, never persist as a standing suggestion.
+		"5-hour", "5h budget", "budget at", "near the limit", "hit the ceiling",
+		"rate limit", "wrapping up",
 	}
 	for _, p := range nonApply {
 		if strings.Contains(lower, p) {
@@ -418,10 +456,12 @@ func mergeSuggestions(session, cwd string, incoming []classifiedSuggestion) []cl
 
 	var out []classifiedSuggestion
 	for _, ln := range readSuggestions(session) {
-		if c := classifySuggestion(ln, snap, st); isApplyable(c) {
-			out = append(out, c)
-			keys[leverKey(c.Text)] = true
+		c := classifySuggestion(ln, snap, st)
+		if !isApplyable(c) || staleInstrumentClaim(c.Text, snap) {
+			continue
 		}
+		out = append(out, c)
+		keys[leverKey(c.Text)] = true
 	}
 
 	var fresh []string
