@@ -11,6 +11,8 @@ notes, so keep entries user-facing and concise. Add new work under
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-07-03
+
 ### Added
 - **Fault analysis (inspired by sniffly).** The analyzer now counts failed tool
   calls from the transcript, attributes them to the originating tool, and
@@ -49,8 +51,7 @@ notes, so keep entries user-facing and concise. Add new work under
   `b=1` (second arg) and `exec "$0"` became `exec "apply"` (first arg) — so no
   positional parameter survives at all; the binary path is now carried in the
   `$COCKPIT_BIN` env var, which (like `$#` and `$@`) substitution leaves
-  alone. (2) The
-  slash command has no interactive stdin, so apply's y/N prompt read EOF and
+  alone. (2) The slash command has no interactive stdin, so apply's y/N prompt read EOF and
   silently cancelled every time; the command template now declares
   non-interactivity via `COCKPIT_ASSUME_YES=1` (an env contract, not an isatty
   heuristic — `/dev/null` is a char device and fools those) and apply
@@ -71,7 +72,6 @@ notes, so keep entries user-facing and concise. Add new work under
   with no manual refresh.
 - **Debrief showed another session's context/cost.** It now prefers the
   session's own snapshot instruments over the globally-last-written state.
-
 - **Suggestions leaked across concurrent sessions.** The advisor stored its
   report, snapshot, and chime state in single global files, so the daemon's
   last-processed session pushed its suggestions into every other session's
@@ -86,7 +86,6 @@ notes, so keep entries user-facing and concise. Add new work under
   reads the session's own signals (not the newest file from any session), and
   SessionEnd cleanup removes only that session's artifacts. `cockpit list`
   now names the session it is scoped to.
-
 - **`/cockpit apply <n>` (and any multi-word argument) failed with
   `unknown subcommand "apply 1"`.** The slash command re-expanded the
   substituted `$ARGUMENTS` from a shell variable, and an unquoted `${VAR}`
