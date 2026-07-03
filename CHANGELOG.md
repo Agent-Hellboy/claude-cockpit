@@ -44,10 +44,12 @@ notes, so keep entries user-facing and concise. Add new work under
 
 ### Fixed
 - **`/cockpit apply <n>` broke again — and could never actually apply.** Two
-  bugs: (1) Claude Code substitutes `$1`-`$9` placeholders inside a slash
-  command's shell line even within single quotes, which clobbered the previous
-  fix's `b=$1` into `b=1` (`exec: 1: not found`); the binary path is now bound
-  to `$0` via `sh -c '…' <path>`, which substitution leaves alone. (2) The
+  bugs: (1) Claude Code substitutes `$<digit>` placeholders inside a slash
+  command's shell line even within single quotes, zero-indexed — `b=$1` became
+  `b=1` (second arg) and `exec "$0"` became `exec "apply"` (first arg) — so no
+  positional parameter survives at all; the binary path is now carried in the
+  `$COCKPIT_BIN` env var, which (like `$#` and `$@`) substitution leaves
+  alone. (2) The
   slash command has no interactive stdin, so apply's y/N prompt read EOF and
   silently cancelled every time; the command template now declares
   non-interactivity via `COCKPIT_ASSUME_YES=1` (an env contract, not an isatty
