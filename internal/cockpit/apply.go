@@ -110,7 +110,10 @@ func applyableReportIndex(session string, n int) (int, error) {
 			}
 		}
 	}
-	return 0, fmt.Errorf("only %d applyable fix(es); use cockpit list", applyN)
+	if applyN == 0 {
+		return 0, fmt.Errorf("no applyable fixes available; run: cockpit list")
+	}
+	return 0, fmt.Errorf("fix #%d not found: only %d available; run: cockpit list", n, applyN)
 }
 
 // RunApply applies applyable fix n (1-based) from the session resolved for cwd.
@@ -129,7 +132,7 @@ func RunApply(n int, cwd string, yes, dryRun bool) error {
 		if len(applyable) == 0 {
 			return fmt.Errorf("no applyable fixes for this session (notes and slash-command reminders are not wired via apply)")
 		}
-		return fmt.Errorf("only %d applyable fix(es); use cockpit list", len(applyable))
+		return fmt.Errorf("fix #%d not found: only %d available; run: cockpit list", n, len(applyable))
 	}
 	reportIdx, err := applyableReportIndex(session, n)
 	if err != nil {

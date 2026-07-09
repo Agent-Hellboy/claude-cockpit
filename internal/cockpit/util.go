@@ -11,20 +11,68 @@ import (
 	"unicode/utf8"
 )
 
-// Catppuccin Mocha — a balanced 24-bit palette designed to be easy on the eyes
+// Catppuccin Mocha (dark) — a balanced 24-bit palette designed to be easy on the eyes
 // on dark backgrounds: rich, harmonious hues rather than harsh saturation, and a
 // soft (not washed-out) secondary for labels/separators.
 const (
-	rst     = "\033[0m"
-	bold    = "\033[1m"
-	green   = "\033[38;2;166;227;161m" // Green
-	yellow  = "\033[38;2;249;226;175m" // Yellow
-	red     = "\033[38;2;243;139;168m" // Red
-	cyan    = "\033[38;2;148;226;213m" // Teal
-	blue    = "\033[38;2;137;180;250m" // Blue
-	magenta = "\033[38;2;203;166;247m" // Mauve
-	dim     = "\033[38;2;147;153;178m" // Overlay2 — soft, readable secondary
+	darkGreen   = "\033[38;2;166;227;161m" // Mocha Green
+	darkYellow  = "\033[38;2;249;226;175m" // Mocha Yellow
+	darkRed     = "\033[38;2;243;139;168m" // Mocha Red
+	darkCyan    = "\033[38;2;148;226;213m" // Mocha Teal
+	darkBlue    = "\033[38;2;137;180;250m" // Mocha Blue
+	darkMagenta = "\033[38;2;203;166;247m" // Mocha Mauve
+	darkDim     = "\033[38;2;147;153;178m" // Mocha Overlay2 — soft, readable secondary
 )
+
+// Catppuccin Latte (light) — high contrast colors for light backgrounds
+const (
+	lightGreen   = "\033[38;2;64;160;43m"   // Latte Green
+	lightYellow  = "\033[38;2;175;109;0m"   // Latte Yellow
+	lightRed     = "\033[38;2;210;15;57m"   // Latte Red
+	lightCyan    = "\033[38;2;23;146;153m"  // Latte Teal
+	lightBlue    = "\033[38;2;30;102;205m"  // Latte Blue
+	lightMagenta = "\033[38;2;136;23;152m"  // Latte Mauve
+	lightDim     = "\033[38;2;108;115;137m" // Latte Text — darker secondary
+)
+
+const (
+	rst  = "\033[0m"
+	bold = "\033[1m"
+)
+
+var (
+	green   string
+	yellow  string
+	red     string
+	cyan    string
+	blue    string
+	magenta string
+	dim     string
+)
+
+func init() {
+	if isLightMode() {
+		green, yellow, red, cyan, blue, magenta, dim = lightGreen, lightYellow, lightRed, lightCyan, lightBlue, lightMagenta, lightDim
+	} else {
+		green, yellow, red, cyan, blue, magenta, dim = darkGreen, darkYellow, darkRed, darkCyan, darkBlue, darkMagenta, darkDim
+	}
+}
+
+// isLightMode detects if the terminal has a light background.
+// Checks COCKPIT_LIGHT_MODE env var first, then COLORFGBG (last digit: 7=light, 0=dark).
+func isLightMode() bool {
+	if m := os.Getenv("COCKPIT_LIGHT_MODE"); m != "" {
+		return m == "1" || m == "true" || m == "yes"
+	}
+	// COLORFGBG format: "foreground;background" (e.g. "0;7" for black text on white)
+	if cfgbg := os.Getenv("COLORFGBG"); cfgbg != "" {
+		parts := strings.Split(cfgbg, ";")
+		if len(parts) >= 2 {
+			return parts[1] == "7" || parts[1] == "15" // 7=white, 15=bright white
+		}
+	}
+	return false
+}
 
 // ConfigDir returns the Claude Code config directory, honoring CLAUDE_CONFIG_DIR.
 func ConfigDir() string {
