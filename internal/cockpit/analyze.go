@@ -9,7 +9,6 @@ import (
 	"io"
 	"io/fs"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -124,10 +123,6 @@ func RunAnalyze(r io.Reader) {
 	var in stopInput
 	if json.Unmarshal(data, &in) != nil || in.TranscriptPath == "" {
 		debugLog("analyze: invalid stop hook input")
-		return
-	}
-	if _, err := exec.LookPath("claude"); err != nil {
-		debugLog("analyze: claude not found: %v", err)
 		return
 	}
 
