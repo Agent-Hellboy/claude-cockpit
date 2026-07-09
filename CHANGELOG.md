@@ -11,6 +11,19 @@ notes, so keep entries user-facing and concise. Add new work under
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-07-09
+
+### Added
+- **Light mode theme support.** Terminal output now respects light backgrounds
+  via `COCKPIT_LIGHT_MODE` environment variable or automatic detection via
+  `COLORFGBG`. Switches from Catppuccin Mocha (dark) to Catppuccin Latte (light)
+  color scheme for optimal readability.
+
+### Fixed
+- **Improved cockpit apply error messages.** When a fix number is out of range,
+  the error now clearly indicates how many fixes are available and suggests
+  `cockpit list` for finding the right number.
+
 ## [0.2.0] - 2026-07-03
 
 ### Added
