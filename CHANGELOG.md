@@ -11,6 +11,8 @@ notes, so keep entries user-facing and concise. Add new work under
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-07-24
+
 ### Added
 - **Codex and Cursor project installation.** `cockpit install codex` now writes a
   managed `AGENTS.md` pointer to the shared project skill, and `cockpit install
@@ -191,6 +193,9 @@ notes, so keep entries user-facing and concise. Add new work under
 See the [GitHub releases](https://github.com/Agent-Hellboy/agent-flightdeck/releases)
 page for notes on releases prior to the introduction of this changelog.
 
-[Unreleased]: https://github.com/Agent-Hellboy/agent-flightdeck/compare/v0.1.7...HEAD
+[Unreleased]: https://github.com/Agent-Hellboy/agent-flightdeck/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/Agent-Hellboy/agent-flightdeck/compare/v0.2.1...v0.3.0
+[0.2.1]: https://github.com/Agent-Hellboy/agent-flightdeck/compare/v0.2.0...v0.2.1
+[0.2.0]: https://github.com/Agent-Hellboy/agent-flightdeck/compare/v0.1.7...v0.2.0
 [0.1.7]: https://github.com/Agent-Hellboy/agent-flightdeck/compare/v0.1.6...v0.1.7
 [0.1.6]: https://github.com/Agent-Hellboy/agent-flightdeck/compare/v0.1.5...v0.1.6

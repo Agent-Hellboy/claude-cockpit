@@ -8,8 +8,6 @@ gets expensive, repetitive, or hard to steer. Across Claude Code, Codex, and
 Cursor it discovers agent-specific project surfaces and can propagate accepted
 rules or skills into the right files.
 
-![Agent Flightdeck status line](docs/statusline.png)
-
 ## Why use it
 
 - See branch, PR state, model, effort, context pressure, token churn, rate-limit
@@ -68,8 +66,6 @@ cockpit install all
 
 ## What it shows
 
-![multiple suggestions](docs/bar-suggestions.png)
-
 - **Status line:** project, git state, model, effort, context fill, token churn,
   cache/output tokens, rate limits, and cost.
 - **Session advisor:** a background `haiku` check that surfaces the highest-value
@@ -82,12 +78,6 @@ cockpit install all
   resources, graphify state, and audited third-party tool gaps.
 - **Non-blocking runtime:** analysis runs detached, so your turn does not wait on
   the advisor.
-
-More examples:
-
-![graphify build suggestion](docs/bar-graphify.png)
-![model downgrade suggestion](docs/bar-model.png)
-![skill suggestion](docs/bar-skill.png)
 
 ## Accepting suggestions
 
