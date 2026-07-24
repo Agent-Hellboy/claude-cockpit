@@ -20,14 +20,16 @@ rules or skills into the right files.
   `cockpit apply <n>`, which updates project config only after you confirm.
 - Keep Claude Code, Codex, and Cursor project guidance aligned from the same
   accepted control.
+- Save compact hourly memory of coding-agent sessions for retrieval by other
+  tools without storing raw transcripts.
 
 ## Agent support
 
 | Agent | Support |
 |---|---|
 | Claude Code | Live status line, `Stop`/`SessionEnd` hooks, `/cockpit`, MCP discovery, skills, subagents |
-| Codex | Project/user skill and agent discovery, `AGENTS.md` rule propagation, shared `.mcp.json` discovery |
-| Cursor | `.cursor/rules` discovery, `.cursor/rules/cockpit.mdc` rule propagation, Cursor MCP config discovery |
+| Codex | `cockpit install codex`, project/user skill and agent discovery, `AGENTS.md` rule propagation, shared `.mcp.json` discovery |
+| Cursor | `cockpit install cursor`, `.cursor/rules` discovery, `.cursor/rules/agent-flightdeck.mdc` rule propagation, Cursor MCP config discovery |
 
 Claude Code is currently the live instrumentation source because it exposes the
 status-line and hook payloads this tool reads. Codex and Cursor support is
@@ -53,6 +55,14 @@ go install github.com/Agent-Hellboy/agent-flightdeck/cmd/cockpit@latest
 cockpit install
 ```
 
+Install project-level guidance for Codex and Cursor:
+
+```bash
+cockpit install codex
+cockpit install cursor
+cockpit install all
+```
+
 ## What it shows
 
 ![multiple suggestions](docs/bar-suggestions.png)
@@ -61,6 +71,9 @@ cockpit install
   cache/output tokens, rate limits, and cost.
 - **Session advisor:** a background `haiku` check that surfaces the highest-value
   next controls for the current session.
+- **Session memory:** the daemon scans changed Claude/Codex/Cursor session files
+  hourly and writes compact JSONL summaries of what the user asked, when it
+  happened, which tools ran, and which files were touched.
 - **Tool awareness:** suggestions can reference Claude Code commands, installed
   Claude/Codex skills and agents, Cursor rules, MCP resources, graphify state,
   and audited third-party tool gaps.
@@ -89,7 +102,7 @@ cockpit apply 3 --dry-run
 When you accept a fix, Agent Flightdeck may:
 
 - Append the accepted rule to `CLAUDE.md`, `AGENTS.md`, and
-  `.cursor/rules/cockpit.mdc`.
+  `.cursor/rules/agent-flightdeck.mdc`.
 - Merge MCP servers into `.mcp.json`.
 - Write project skills to `.claude/skills/<name>/SKILL.md` and
   `.codex/skills/<name>/SKILL.md`.
@@ -97,12 +110,30 @@ When you accept a fix, Agent Flightdeck may:
 
 Restart Claude Code or run `/hooks` after MCP servers are added so they load.
 
+## Background memory
+
+The daemon runs a memory scan once an hour. It does not persist raw transcripts;
+it stores compact records in `~/.claude/cockpit-logs/memory.jsonl` and tracks
+processed files in `memory-state.json` so unchanged sessions are skipped.
+
+```bash
+cockpit memory             # latest compact summaries
+cockpit memory --json      # JSONL for another system to consume
+cockpit memory --scan      # scan now, then print memory
+cockpit memory auth --json # query summaries by text
+```
+
 ## Commands
 
 | Command | Purpose |
 |---|---|
 | `cockpit install` | Register Claude Code status line and hooks |
-| `cockpit uninstall` | Remove cockpit settings and transient state |
+| `cockpit install codex` | Add `AGENTS.md` guidance and a `.codex` Agent Flightdeck skill |
+| `cockpit install cursor` | Add `.cursor/rules/agent-flightdeck.mdc` |
+| `cockpit install all` | Install Claude Code hooks plus Codex and Cursor project guidance |
+| `cockpit uninstall` | Remove Claude Code cockpit settings and transient state |
+| `cockpit uninstall codex` | Remove managed Codex guidance and the Agent Flightdeck Codex skill |
+| `cockpit uninstall cursor` | Remove the managed Cursor rule |
 | `cockpit statusline` | Render the Claude Code status line |
 | `cockpit analyze` | Run the `Stop` hook analyzer |
 | `cockpit list` | Show numbered suggestions |
@@ -112,6 +143,9 @@ Restart Claude Code or run `/hooks` after MCP servers are added so they load.
 | `cockpit plan` | Session route, cost index, deviation |
 | `cockpit status` | Deferred items |
 | `cockpit debrief [session]` | Post-session summary |
+| `cockpit memory [query]` | Retrieve compact background session memory |
+| `cockpit memory --json` | Emit memory as JSONL for other systems |
+| `cockpit memory --scan` | Scan sessions immediately before retrieval |
 | `cockpit daemon start` | Start persistent advisor daemon |
 | `cockpit daemon stop` | Stop advisor daemon |
 | `cockpit daemon status` | Show daemon state and queue depth |
@@ -127,6 +161,11 @@ Restart Claude Code or run `/hooks` after MCP servers are added so they load.
 | `COCKPIT_DISPLAY` | `minimal`, `full` (default), or `debug` |
 | `COCKPIT_COST_INDEX` | `eco`, `normal` (default), or `perf` |
 | `COCKPIT_ALERT_CHIME=1` | Terminal bell when context crosses 90% |
+| `COCKPIT_MEMORY_DISABLE=1` | Disable hourly background memory scans |
+| `COCKPIT_MEMORY_INTERVAL` | Override scan interval, e.g. `30m` or `3600` |
+| `COCKPIT_CLAUDE_SESSION_DIR` | Override Claude transcript scan root |
+| `COCKPIT_CODEX_SESSION_DIR` | Override Codex session scan root |
+| `COCKPIT_CURSOR_SESSION_DIR` | Override Cursor session scan root |
 | `CLAUDE_CONFIG_DIR` | Use a different Claude config directory |
 | `CODEX_HOME` | Use a different Codex config directory |
 | `CURSOR_CONFIG_DIR` | Use a different Cursor config directory |

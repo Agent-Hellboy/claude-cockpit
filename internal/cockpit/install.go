@@ -9,11 +9,38 @@ import (
 	"time"
 )
 
-// Install registers cockpit into settings.json (statusLine + Stop hook), merging
-// rather than overwriting so other settings/hooks are preserved. Idempotent.
-// The merge is done in Go so the installer needs no jq. Returns an error string
-// on failure (callers print + exit).
-func Install() error {
+// Install registers cockpit for one or more coding agents. With no target it
+// preserves the historical behavior: install Claude Code hooks only.
+func Install(targets ...string) error {
+	if len(targets) == 0 {
+		targets = []string{"claude"}
+	}
+	cwd, _ := os.Getwd()
+	for _, target := range expandInstallTargets(targets) {
+		switch target {
+		case "claude":
+			if err := installClaude(); err != nil {
+				return err
+			}
+		case "codex":
+			if err := installCodex(cwd); err != nil {
+				return err
+			}
+		case "cursor":
+			if err := installCursor(cwd); err != nil {
+				return err
+			}
+		default:
+			return fmt.Errorf("unknown install target %q (use claude, codex, cursor, or all)", target)
+		}
+	}
+	return nil
+}
+
+// installClaude registers cockpit into settings.json (statusLine + Stop hook),
+// merging rather than overwriting so other settings/hooks are preserved.
+// Idempotent. The merge is done in Go so the installer needs no jq.
+func installClaude() error {
 	exe, err := os.Executable()
 	if err != nil {
 		return fmt.Errorf("cannot resolve own path: %w", err)
@@ -47,7 +74,7 @@ func Install() error {
 	}
 	fmt.Printf("\033[32mInstalled.\033[0m Registered cockpit in %s\n", settingsPath)
 	fmt.Println("Restart Claude Code (or run /hooks) so the Stop hook loads. The status bar is live immediately.")
-	fmt.Println("Accept a suggestion: cockpit apply <n>  (updates CLAUDE.md, MCP, skills after you confirm)")
+	fmt.Println("Accept a suggestion: cockpit apply <n>  (updates agent instructions, MCP, skills after you confirm)")
 	if err := StartDaemonDetached(); err != nil {
 		fmt.Println("Advisor daemon: start manually with  cockpit daemon start")
 	} else {
@@ -56,9 +83,64 @@ func Install() error {
 	return nil
 }
 
-// Uninstall removes cockpit's entries from settings.json and deletes transient
-// state. It leaves the binary in place (the installer/user manages that).
-func Uninstall() error {
+func installCodex(cwd string) error {
+	if cwd == "" {
+		cwd, _ = os.Getwd()
+	}
+	if err := upsertManagedSection(filepath.Join(cwd, "AGENTS.md"), "codex", codexAgentInstructions()); err != nil {
+		return err
+	}
+	if err := writeCodexSkill(cwd, "agent-flightdeck", codexFlightdeckSkill()); err != nil {
+		return err
+	}
+	fmt.Printf("\033[32mInstalled.\033[0m Registered Agent Flightdeck for Codex in %s\n", cwd)
+	fmt.Println("Codex can now read AGENTS.md and the agent-flightdeck project skill.")
+	return nil
+}
+
+func installCursor(cwd string) error {
+	if cwd == "" {
+		cwd, _ = os.Getwd()
+	}
+	path := filepath.Join(cwd, ".cursor", "rules", "agent-flightdeck.mdc")
+	if err := upsertManagedSection(path, "cursor", cursorFlightdeckRule()); err != nil {
+		return err
+	}
+	fmt.Printf("\033[32mInstalled.\033[0m Registered Agent Flightdeck for Cursor in %s\n", path)
+	return nil
+}
+
+// Uninstall removes cockpit's entries for one or more coding agents. With no
+// target it preserves the historical behavior: uninstall Claude Code hooks only.
+func Uninstall(targets ...string) error {
+	if len(targets) == 0 {
+		targets = []string{"claude"}
+	}
+	cwd, _ := os.Getwd()
+	for _, target := range expandInstallTargets(targets) {
+		switch target {
+		case "claude":
+			if err := uninstallClaude(); err != nil {
+				return err
+			}
+		case "codex":
+			if err := uninstallCodex(cwd); err != nil {
+				return err
+			}
+		case "cursor":
+			if err := uninstallCursor(cwd); err != nil {
+				return err
+			}
+		default:
+			return fmt.Errorf("unknown uninstall target %q (use claude, codex, cursor, or all)", target)
+		}
+	}
+	return nil
+}
+
+// uninstallClaude removes cockpit's entries from settings.json and deletes
+// transient state. It leaves the binary in place (the installer/user manages that).
+func uninstallClaude() error {
 	_ = StopDaemon()
 	exe, _ := os.Executable()
 	exe, _ = filepath.Abs(exe)
@@ -113,6 +195,30 @@ func Uninstall() error {
 		}
 	}
 	fmt.Println("\033[32mUninstalled.\033[0m Removed cockpit entries and state. Restart Claude Code to drop the status line.")
+	return nil
+}
+
+func uninstallCodex(cwd string) error {
+	if cwd == "" {
+		cwd, _ = os.Getwd()
+	}
+	if err := removeManagedSection(filepath.Join(cwd, "AGENTS.md"), "codex"); err != nil {
+		return err
+	}
+	_ = os.RemoveAll(filepath.Join(cwd, ".codex", "skills", "agent-flightdeck"))
+	fmt.Printf("\033[32mUninstalled.\033[0m Removed Agent Flightdeck Codex files from %s\n", cwd)
+	return nil
+}
+
+func uninstallCursor(cwd string) error {
+	if cwd == "" {
+		cwd, _ = os.Getwd()
+	}
+	path := filepath.Join(cwd, ".cursor", "rules", "agent-flightdeck.mdc")
+	if err := removeManagedSection(path, "cursor"); err != nil {
+		return err
+	}
+	fmt.Printf("\033[32mUninstalled.\033[0m Removed Agent Flightdeck Cursor rule from %s\n", path)
 	return nil
 }
 
@@ -290,4 +396,160 @@ func writeSlashCommand(exe string) error {
 	}
 	body := strings.ReplaceAll(cockpitCommandMD, "{{EXE}}", quote(exe))
 	return os.WriteFile(path, []byte(body), 0o644)
+}
+
+func expandInstallTargets(targets []string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, t := range targets {
+		t = strings.ToLower(strings.TrimSpace(t))
+		if t == "" {
+			continue
+		}
+		if t == "all" {
+			for _, expanded := range []string{"claude", "codex", "cursor"} {
+				if !seen[expanded] {
+					seen[expanded] = true
+					out = append(out, expanded)
+				}
+			}
+			continue
+		}
+		if !seen[t] {
+			seen[t] = true
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+func managedStart(id string) string { return "<!-- agent-flightdeck:" + id + ":start -->" }
+func managedEnd(id string) string   { return "<!-- agent-flightdeck:" + id + ":end -->" }
+
+func upsertManagedSection(path, id, section string) error {
+	start, end := managedStart(id), managedEnd(id)
+	existing, _ := os.ReadFile(path)
+	body := strings.TrimSpace(section)
+	prefix := ""
+	if strings.HasSuffix(path, ".mdc") && strings.HasPrefix(body, "---\n") {
+		rest := body[4:]
+		if i := strings.Index(rest, "\n---"); i >= 0 {
+			prefix = "---\n" + rest[:i] + "\n---\n\n"
+			body = strings.TrimSpace(rest[i+4:])
+		}
+	}
+	block := start + "\n" + body + "\n" + end
+	text := string(existing)
+	if text == "" {
+		text = prefix + block + "\n"
+	} else if s := strings.Index(text, start); s >= 0 {
+		if e := strings.Index(text[s:], end); e >= 0 {
+			e += s + len(end)
+			text = text[:s] + block + text[e:]
+		} else {
+			text = strings.TrimRight(text, "\n") + "\n\n" + block + "\n"
+		}
+	} else {
+		text = strings.TrimRight(text, "\n") + "\n\n" + block + "\n"
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(path, []byte(text), 0o644)
+}
+
+func removeManagedSection(path, id string) error {
+	b, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	text := string(b)
+	start, end := managedStart(id), managedEnd(id)
+	s := strings.Index(text, start)
+	if s < 0 {
+		return nil
+	}
+	e := strings.Index(text[s:], end)
+	if e < 0 {
+		return nil
+	}
+	e += s + len(end)
+	text = strings.TrimSpace(text[:s] + text[e:])
+	if text == "" || mdcFrontmatterOnly(text) {
+		return os.Remove(path)
+	}
+	return os.WriteFile(path, []byte(text+"\n"), 0o644)
+}
+
+func mdcFrontmatterOnly(text string) bool {
+	text = strings.TrimSpace(text)
+	if !strings.HasPrefix(text, "---\n") {
+		return false
+	}
+	rest := strings.TrimSpace(strings.TrimPrefix(text, "---"))
+	if i := strings.Index(rest, "---"); i >= 0 {
+		return strings.TrimSpace(rest[i+3:]) == ""
+	}
+	return false
+}
+
+func codexAgentInstructions() string {
+	return `## Agent Flightdeck
+
+- Use ` + "`cockpit systems`" + ` at the start of substantial work to inspect configured agents, MCP servers, skills, Cursor rules, and graphify state.
+- Use ` + "`cockpit memory --json`" + ` when another tool needs compact background memory of what happened in recent sessions.
+- Use ` + "`cockpit status`" + `, ` + "`cockpit plan`" + `, and ` + "`cockpit checklist <topic>`" + ` when a session gets noisy, expensive, or unclear.
+- Use ` + "`cockpit list`" + ` to inspect pending controls and ` + "`cockpit apply <n> --dry-run`" + ` before wiring a suggested rule, MCP server, or skill into the project.
+- Keep accepted workflow controls consistent across ` + "`CLAUDE.md`" + `, ` + "`AGENTS.md`" + `, and Cursor rules.`
+}
+
+func cursorFlightdeckRule() string {
+	return `---
+description: Agent Flightdeck cockpit controls
+alwaysApply: true
+---
+
+# Agent Flightdeck
+
+- Use ` + "`cockpit systems`" + ` before broad repo work to inspect configured agents, MCP servers, skills, Cursor rules, and graphify state.
+- Use ` + "`cockpit memory`" + ` to retrieve compact background summaries of recent coding-agent sessions.
+- Use ` + "`cockpit status`" + `, ` + "`cockpit plan`" + `, and ` + "`cockpit checklist <topic>`" + ` when the session needs a clearer route or safer next control.
+- Use ` + "`cockpit list`" + ` to inspect pending controls and ` + "`cockpit apply <n> --dry-run`" + ` before accepting changes.
+- Keep accepted controls aligned with Claude Code and Codex project instructions.`
+}
+
+func codexFlightdeckSkill() string {
+	return `# Agent Flightdeck
+
+Use this skill when a Codex session should inspect or apply Agent Flightdeck controls.
+
+## Workflow
+
+1. Run ` + "`cockpit systems`" + ` to inspect configured coding agents, MCP servers, skills, Cursor rules, and graphify state.
+2. Run ` + "`cockpit status`" + ` or ` + "`cockpit plan`" + ` when context, budget, or route drift needs attention.
+3. Run ` + "`cockpit memory --json`" + ` when a downstream system needs compact session memory.
+4. Run ` + "`cockpit checklist <topic>`" + ` for focused procedures such as context, budget, search, or faults.
+5. Run ` + "`cockpit list`" + ` to inspect pending suggestions.
+6. Use ` + "`cockpit apply <n> --dry-run`" + ` before accepting a suggested instruction, MCP, or skill change.
+
+## Boundaries
+
+- Treat cockpit suggestions as advisory.
+- Prefer dry runs before project writes.
+- Preserve existing Claude Code, Codex, and Cursor instruction files when applying a control.`
+}
+
+func writeCodexSkill(cwd, name, content string) error {
+	name = strings.Trim(name, "/")
+	if name == "" {
+		return fmt.Errorf("empty skill name")
+	}
+	dir := filepath.Join(cwd, ".codex", "skills", name)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte(strings.TrimSpace(content)+"\n"), 0o644)
 }

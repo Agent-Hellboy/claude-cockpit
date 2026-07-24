@@ -56,6 +56,9 @@ func RunDaemonStatus(w io.Writer) {
 		if len(pending) > 0 {
 			fmt.Fprintf(w, "  queued jobs: %d\n", len(pending))
 		}
+		if info, err := os.Stat(memoryFile()); err == nil {
+			fmt.Fprintf(w, "  memory: %s (%d bytes)\n", memoryFile(), info.Size())
+		}
 		return
 	}
 	fmt.Fprintln(w, "cockpit advisor daemon not running")
@@ -140,6 +143,7 @@ func RunDaemon() {
 	defer cancel()
 	go acquisitionLoop(ctx)
 	go advisorLoop(ctx)
+	go memoryLoop(ctx)
 
 	sigc := make(chan os.Signal, 1)
 	signal.Notify(sigc, syscall.SIGINT, syscall.SIGTERM)

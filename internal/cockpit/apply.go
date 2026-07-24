@@ -310,14 +310,14 @@ func appendInstructionFile(path, section, marker string) error {
 		}
 		b.WriteString("\n")
 	}
-	b.WriteString(markerLine)
-	b.WriteString("\n")
 	if strings.HasSuffix(path, ".mdc") && len(existing) == 0 {
 		b.WriteString("---\n")
 		b.WriteString("description: Agent Flightdeck accepted controls\n")
 		b.WriteString("alwaysApply: true\n")
 		b.WriteString("---\n\n")
 	}
+	b.WriteString(markerLine)
+	b.WriteString("\n")
 	b.WriteString(strings.TrimSpace(section))
 	b.WriteString("\n")
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {

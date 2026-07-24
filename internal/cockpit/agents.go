@@ -47,7 +47,7 @@ func codingAgents(cwd string) []codingAgent {
 			ProjectDirs: []string{filepath.Join(cwd, ".cursor", "rules")},
 			UserDirs:    []string{filepath.Join(cursorDir, "rules")},
 			MCPFiles:    []string{filepath.Join(cwd, ".cursor", "mcp.json"), filepath.Join(cursorDir, "mcp.json")},
-			RuleFiles:   []string{filepath.Join(cwd, ".cursor", "rules", "cockpit.mdc")},
+			RuleFiles:   []string{filepath.Join(cwd, ".cursor", "rules", "agent-flightdeck.mdc")},
 		},
 	}
 }

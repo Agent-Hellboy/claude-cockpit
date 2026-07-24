@@ -4,8 +4,8 @@
 //
 //	cockpit statusline   # statusLine command — renders the two-row bar
 //	cockpit analyze      # Stop hook — analyzes the session for token savings
-//	cockpit install      # register Claude Code statusLine + Stop hook
-//	cockpit uninstall    # remove cockpit settings and transient state
+//	cockpit install      # register Claude Code hooks, or install codex/cursor/all
+//	cockpit uninstall    # remove cockpit settings, or uninstall codex/cursor/all
 //	cockpit list         # show numbered suggestions
 //	cockpit apply N      # accept suggestion N — updates agent rules, MCP, skills
 //	cockpit systems      # ECAM synoptic of hooks, MCP, skills, graphify
@@ -13,6 +13,7 @@
 //	cockpit plan         # FMS-style session route and deviation
 //	cockpit status       # ECAM STATUS deferred items
 //	cockpit debrief      # post-session black-box summary
+//	cockpit memory       # retrieve compact background session memory
 //	cockpit daemon       # advisor daemon status
 //	cockpit daemon start # start persistent ECAM advisor LRU
 //	cockpit daemon stop  # stop advisor daemon
@@ -26,6 +27,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 
 	"github.com/Agent-Hellboy/agent-flightdeck/internal/cockpit"
 )
@@ -35,7 +37,7 @@ var version = "dev"
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: cockpit {statusline|analyze|install|uninstall|list|apply|systems|checklist|plan|status|debrief|daemon|worker|version}")
+		fmt.Fprintln(os.Stderr, "usage: cockpit {statusline|analyze|install [claude|codex|cursor|all]|uninstall [claude|codex|cursor|all]|list|apply|systems|checklist|plan|status|debrief|memory|daemon|worker|version}")
 		os.Exit(2)
 	}
 	switch os.Args[1] {
@@ -91,6 +93,19 @@ func main() {
 			session = os.Args[2]
 		}
 		cockpit.RunDebrief(os.Stdout, session)
+	case "memory":
+		fs := flag.NewFlagSet("memory", flag.ExitOnError)
+		jsonOut := fs.Bool("json", false, "print JSONL for machine consumption")
+		limit := fs.Int("limit", 20, "maximum entries to print")
+		scan := fs.Bool("scan", false, "scan sessions before reading memory")
+		_ = fs.Parse(os.Args[2:])
+		if *scan {
+			if err := cockpit.RunMemoryScan(); err != nil {
+				fmt.Fprintln(os.Stderr, "memory scan failed:", err)
+				os.Exit(1)
+			}
+		}
+		cockpit.RunMemory(os.Stdout, strings.Join(fs.Args(), " "), *limit, *jsonOut)
 	case "daemon":
 		sub := "status"
 		if len(os.Args) > 2 {
@@ -129,12 +144,12 @@ func main() {
 	case "cleanup":
 		cockpit.RunCleanup(os.Stdin)
 	case "install":
-		if err := cockpit.Install(); err != nil {
+		if err := cockpit.Install(os.Args[2:]...); err != nil {
 			fmt.Fprintln(os.Stderr, "install failed:", err)
 			os.Exit(1)
 		}
 	case "uninstall":
-		if err := cockpit.Uninstall(); err != nil {
+		if err := cockpit.Uninstall(os.Args[2:]...); err != nil {
 			fmt.Fprintln(os.Stderr, "uninstall failed:", err)
 			os.Exit(1)
 		}

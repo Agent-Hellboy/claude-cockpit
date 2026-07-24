@@ -293,6 +293,62 @@ func TestMalformedStopHookReplaced(t *testing.T) {
 	}
 }
 
+func TestInstallCodexAndCursorProjectFiles(t *testing.T) {
+	dir := t.TempDir()
+	// Exercise the target helpers directly so the test does not chdir the whole
+	// process or write AGENTS.md/.cursor into the checked-out repository.
+	if err := installCodex(dir); err != nil {
+		t.Fatal(err)
+	}
+	if err := installCursor(dir); err != nil {
+		t.Fatal(err)
+	}
+	if err := installCodex(dir); err != nil {
+		t.Fatal(err)
+	}
+	if err := installCursor(dir); err != nil {
+		t.Fatal(err)
+	}
+
+	agents, err := os.ReadFile(filepath.Join(dir, "AGENTS.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Count(string(agents), managedStart("codex")) != 1 || !strings.Contains(string(agents), "cockpit systems") {
+		t.Fatalf("Codex AGENTS.md install not idempotent/useful: %s", agents)
+	}
+	skill, err := os.ReadFile(filepath.Join(dir, ".codex", "skills", "agent-flightdeck", "SKILL.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(skill), "cockpit apply <n> --dry-run") {
+		t.Fatalf("Codex skill missing cockpit workflow: %s", skill)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".claude", "skills", "agent-flightdeck", "SKILL.md")); !os.IsNotExist(err) {
+		t.Fatalf("Codex install should not write Claude skill: %v", err)
+	}
+	cursor, err := os.ReadFile(filepath.Join(dir, ".cursor", "rules", "agent-flightdeck.mdc"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(string(cursor), "---\n") || !strings.Contains(string(cursor), "---\n\n"+managedStart("cursor")) || strings.Count(string(cursor), managedStart("cursor")) != 1 || !strings.Contains(string(cursor), "alwaysApply: true") {
+		t.Fatalf("Cursor rule install not idempotent/useful: %s", cursor)
+	}
+
+	if err := uninstallCodex(dir); err != nil {
+		t.Fatal(err)
+	}
+	if err := uninstallCursor(dir); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".codex", "skills", "agent-flightdeck", "SKILL.md")); !os.IsNotExist(err) {
+		t.Fatalf("Codex skill should be removed on uninstall: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".cursor", "rules", "agent-flightdeck.mdc")); !os.IsNotExist(err) {
+		t.Fatalf("Cursor rule should be removed on uninstall: %v", err)
+	}
+}
+
 func TestTailEntriesBounded(t *testing.T) {
 	dir := t.TempDir()
 	tp := filepath.Join(dir, "t.jsonl")
@@ -710,6 +766,77 @@ func TestHistoryBaseline(t *testing.T) {
 	}
 }
 
+func TestMemoryScanAndRetrieve(t *testing.T) {
+	dir := t.TempDir()
+	claudeDir := filepath.Join(dir, "claude")
+	codexDir := filepath.Join(dir, "codex")
+	cursorDir := filepath.Join(dir, "cursor")
+	t.Setenv("CLAUDE_CONFIG_DIR", claudeDir)
+	t.Setenv("CODEX_HOME", codexDir)
+	t.Setenv("COCKPIT_CURSOR_SESSION_DIR", cursorDir)
+
+	claudeProject := filepath.Join(claudeDir, "projects", "repo")
+	if err := os.MkdirAll(claudeProject, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(codexDir, "sessions"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(cursorDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	claudeTranscript := strings.Join([]string{
+		`{"message":{"role":"user","content":"implement oauth callback"}}`,
+		`{"message":{"role":"assistant","content":[{"type":"tool_use","name":"Read","input":{"file_path":"/repo/auth.go"}},{"type":"tool_use","name":"Bash","input":{"command":"go test ./..."}}]}}`,
+	}, "\n") + "\n"
+	if err := os.WriteFile(filepath.Join(claudeProject, "claude-session.jsonl"), []byte(claudeTranscript), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(codexDir, "sessions", "codex-session.jsonl"), []byte(`{"role":"user","content":"review payment flow","cwd":"/repo","tool":"Read","file":"payments.go"}`+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cursorDir, "cursor-session.jsonl"), []byte(`{"role":"user","text":"fix dashboard layout","tool":"edit","path":"dashboard.tsx"}`+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := RunMemoryScan(); err != nil {
+		t.Fatal(err)
+	}
+	entries := readMemoryEntries("", 10)
+	if len(entries) != 3 {
+		t.Fatalf("want three agent memory entries, got %d: %+v", len(entries), entries)
+	}
+	agents := map[string]bool{}
+	for _, e := range entries {
+		agents[e.Agent] = true
+		if e.Summary == "" || len(e.Summary) > 500 {
+			t.Fatalf("memory summary should be compact and useful: %+v", e)
+		}
+	}
+	for _, agent := range []string{"claude", "codex", "cursor"} {
+		if !agents[agent] {
+			t.Fatalf("missing %s memory entry: %+v", agent, entries)
+		}
+	}
+
+	if err := RunMemoryScan(); err != nil {
+		t.Fatal(err)
+	}
+	if got := readMemoryEntries("", 10); len(got) != 3 {
+		t.Fatalf("unchanged sessions should not duplicate memory, got %d", len(got))
+	}
+
+	var human, jsonOut bytes.Buffer
+	RunMemory(&human, "payment", 5, false)
+	if !strings.Contains(human.String(), "review payment flow") {
+		t.Fatalf("query did not retrieve matching memory:\n%s", human.String())
+	}
+	RunMemory(&jsonOut, "dashboard", 5, true)
+	if !strings.Contains(jsonOut.String(), `"agent":"cursor"`) {
+		t.Fatalf("json retrieval missing cursor memory:\n%s", jsonOut.String())
+	}
+}
+
 func TestResolveSession(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("CLAUDE_CONFIG_DIR", dir)
@@ -928,7 +1055,7 @@ func TestAppendAgentInstructions(t *testing.T) {
 	for _, p := range []string{
 		filepath.Join(dir, "CLAUDE.md"),
 		filepath.Join(dir, "AGENTS.md"),
-		filepath.Join(dir, ".cursor", "rules", "cockpit.mdc"),
+		filepath.Join(dir, ".cursor", "rules", "agent-flightdeck.mdc"),
 	} {
 		b, err := os.ReadFile(p)
 		if err != nil {
@@ -938,8 +1065,8 @@ func TestAppendAgentInstructions(t *testing.T) {
 			t.Fatalf("%s missing rule: %s", p, b)
 		}
 	}
-	cursorRule, _ := os.ReadFile(filepath.Join(dir, ".cursor", "rules", "cockpit.mdc"))
-	if !strings.Contains(string(cursorRule), "alwaysApply: true") {
+	cursorRule, _ := os.ReadFile(filepath.Join(dir, ".cursor", "rules", "agent-flightdeck.mdc"))
+	if !strings.HasPrefix(string(cursorRule), "---\n") || !strings.Contains(string(cursorRule), "alwaysApply: true") {
 		t.Fatalf("Cursor rule should include frontmatter: %s", cursorRule)
 	}
 }
