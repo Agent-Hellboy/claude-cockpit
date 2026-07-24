@@ -4,18 +4,20 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
 )
 
 // Install registers cockpit for one or more coding agents. With no target it
-// preserves the historical behavior: install Claude Code hooks only.
+// auto-detects coding agents present on this machine/project and installs those
+// integrations.
 func Install(targets ...string) error {
-	if len(targets) == 0 {
-		targets = []string{"claude"}
-	}
 	cwd, _ := os.Getwd()
+	if len(targets) == 0 {
+		targets = detectedInstallTargets(cwd)
+	}
 	for _, target := range expandInstallTargets(targets) {
 		switch target {
 		case "claude":
@@ -35,6 +37,52 @@ func Install(targets ...string) error {
 		}
 	}
 	return nil
+}
+
+func detectedInstallTargets(cwd string) []string {
+	ordered := []string{"claude", "codex", "cursor"}
+	var out []string
+	for _, id := range ordered {
+		if codingAgentPresent(id, cwd) {
+			out = append(out, id)
+		}
+	}
+	if len(out) == 0 {
+		// Keep first-run installs useful even before config directories exist.
+		out = []string{"claude"}
+	}
+	return out
+}
+
+func codingAgentPresent(id, cwd string) bool {
+	switch id {
+	case "claude":
+		return commandExists("claude") ||
+			dirExists(ConfigDir()) ||
+			fileExists(filepath.Join(cwd, "CLAUDE.md")) ||
+			dirExists(filepath.Join(cwd, ".claude"))
+	case "codex":
+		return commandExists("codex") ||
+			dirExists(CodexConfigDir()) ||
+			fileExists(filepath.Join(cwd, "AGENTS.md")) ||
+			dirExists(filepath.Join(cwd, ".codex"))
+	case "cursor":
+		return commandExists("cursor") ||
+			dirExists(CursorConfigDir()) ||
+			dirExists(filepath.Join(cwd, ".cursor"))
+	default:
+		return false
+	}
+}
+
+func commandExists(name string) bool {
+	_, err := exec.LookPath(name)
+	return err == nil
+}
+
+func dirExists(path string) bool {
+	st, err := os.Stat(path)
+	return err == nil && st.IsDir()
 }
 
 // installClaude registers cockpit into settings.json (statusLine + Stop hook),

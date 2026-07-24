@@ -41,12 +41,15 @@ file-based today.
 curl -fsSL https://raw.githubusercontent.com/Agent-Hellboy/agent-flightdeck/main/install.sh | bash
 ```
 
-Then restart Claude Code, or run `/hooks`, so the hook loads.
+The installer auto-detects installed/configured coding agents and registers
+Agent Flightdeck for the ones it finds.
 
 The installer downloads the matching macOS or Linux release binary, installs it
-to `~/.claude/bin/cockpit`, and merges the `statusLine` plus `Stop` hook into
-`~/.claude/settings.json`. Existing Claude settings and hooks are preserved, with
-a timestamped backup.
+to `~/.claude/bin/cockpit`, then runs `cockpit install`. For Claude Code it
+merges the `statusLine` plus hooks into `~/.claude/settings.json`; for Codex it
+writes an `AGENTS.md` pointer; for Cursor it writes the shared Agent Flightdeck
+skill. Existing Claude settings and hooks are preserved, with a timestamped
+backup. Restart Claude Code, or run `/hooks`, so Claude hooks load.
 
 Build from source:
 
@@ -55,7 +58,7 @@ go install github.com/Agent-Hellboy/agent-flightdeck/cmd/cockpit@latest
 cockpit install
 ```
 
-Install the shared project skill for Codex and Cursor:
+`cockpit install` auto-detects present agents. To force a specific target:
 
 ```bash
 cockpit install codex
@@ -125,7 +128,7 @@ cockpit memory auth --json # query summaries by text
 
 | Command | Purpose |
 |---|---|
-| `cockpit install` | Register Claude Code status line and hooks |
+| `cockpit install` | Auto-detect present coding agents and register their integrations |
 | `cockpit install codex` | Add an `AGENTS.md` pointer and the shared Agent Flightdeck skill |
 | `cockpit install cursor` | Add the shared Agent Flightdeck skill, no Cursor rule |
 | `cockpit install all` | Install Claude Code hooks plus the shared project skill |

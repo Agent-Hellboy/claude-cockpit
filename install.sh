@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # agent-flightdeck installer — downloads a prebuilt, dependency-free binary and
-# self-registers it into Claude Code where hook support exists. No Go, no jq, no runtime required.
+# self-registers it for detected coding agents. No Go, no jq, no runtime required.
 #
 #   curl -fsSL https://raw.githubusercontent.com/Agent-Hellboy/agent-flightdeck/main/install.sh | bash
 #
-# Env overrides: COCKPIT_VERSION (e.g. v0.1.0), CLAUDE_CONFIG_DIR.
+# Env overrides: COCKPIT_VERSION (e.g. v0.1.0), CLAUDE_CONFIG_DIR, CODEX_HOME,
+# CURSOR_CONFIG_DIR.
 set -euo pipefail
 
 REPO="Agent-Hellboy/agent-flightdeck"
@@ -87,4 +88,5 @@ install -m 0755 "$tmp_bin" "$BIN_DIR/cockpit"
 [ "$os" = "darwin" ] && xattr -d com.apple.quarantine "$BIN_DIR/cockpit" 2>/dev/null || true
 
 say "Installed binary -> $BIN_DIR/cockpit ($("$BIN_DIR/cockpit" version 2>/dev/null || echo "$ver"))"
+say "Registering detected coding agents"
 "$BIN_DIR/cockpit" install

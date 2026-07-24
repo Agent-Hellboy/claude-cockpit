@@ -466,6 +466,41 @@ func TestGatherSignalsAndCadence(t *testing.T) {
 	}
 }
 
+func TestDetectedInstallTargets(t *testing.T) {
+	dir := t.TempDir()
+	home := filepath.Join(dir, "home")
+	bin := filepath.Join(dir, "bin")
+	if err := os.MkdirAll(bin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(home, ".claude"))
+	t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
+	t.Setenv("CURSOR_CONFIG_DIR", filepath.Join(home, ".cursor"))
+	t.Setenv("PATH", bin)
+
+	if got := strings.Join(detectedInstallTargets(dir), ","); got != "claude" {
+		t.Fatalf("empty machine should fall back to claude, got %q", got)
+	}
+
+	if err := os.WriteFile(filepath.Join(bin, "codex"), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, ".cursor"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(detectedInstallTargets(dir), ","); got != "codex,cursor" {
+		t.Fatalf("should detect installed/configured agents, got %q", got)
+	}
+
+	if err := os.MkdirAll(filepath.Join(home, ".claude"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(detectedInstallTargets(dir), ","); got != "claude,codex,cursor" {
+		t.Fatalf("should preserve stable install order, got %q", got)
+	}
+}
+
 func TestMultiAgentDiscovery(t *testing.T) {
 	dir := t.TempDir()
 	home := t.TempDir()

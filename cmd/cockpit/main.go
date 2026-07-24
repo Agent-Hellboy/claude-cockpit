@@ -4,7 +4,7 @@
 //
 //	cockpit statusline   # render Claude live payloads or a generic agent bar
 //	cockpit analyze      # Stop hook — analyzes the session for token savings
-//	cockpit install      # register Claude Code hooks, or install codex/cursor/all
+//	cockpit install      # auto-detect agents, or install claude/codex/cursor/all
 //	cockpit uninstall    # remove cockpit settings, or uninstall codex/cursor/all
 //	cockpit list         # show numbered suggestions
 //	cockpit apply N      # accept suggestion N — updates agent rules, MCP, skills

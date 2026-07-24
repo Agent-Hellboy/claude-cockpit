@@ -25,6 +25,10 @@ notes, so keep entries user-facing and concise. Add new work under
 - **All-agent status line fallback.** `cockpit statusline` now keeps Claude
   Code's live payload support and can also render a generic Codex/Cursor status
   line when no Claude status payload is present.
+- **Auto-detecting install.** The default `cockpit install` path now detects
+  present Claude Code, Codex, and Cursor installs/config markers and registers
+  only those integrations. Explicit targets and `cockpit install all` remain
+  available when the user wants to force a target.
 
 ### Changed
 - Renamed the project from `claude-cockpit` to **Agent Flightdeck**
