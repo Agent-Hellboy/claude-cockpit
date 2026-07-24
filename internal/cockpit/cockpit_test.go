@@ -176,6 +176,44 @@ func TestRunStatuslineSmoke(t *testing.T) {
 	}
 }
 
+func TestRunStatuslineGenericCodingAgents(t *testing.T) {
+	orig, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(orig)
+	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(dir, ".claude"))
+	t.Setenv("COLUMNS", "140")
+
+	for _, tc := range []struct {
+		env  string
+		want string
+	}{
+		{"codex", "Codex"},
+		{"cursor", "Cursor"},
+	} {
+		t.Run(tc.env, func(t *testing.T) {
+			t.Setenv("COCKPIT_AGENT", tc.env)
+			var out bytes.Buffer
+			RunStatusline(strings.NewReader(""), &out)
+			p := plain(out.String())
+			if !strings.Contains(p, tc.want) {
+				t.Fatalf("generic statusline missing %s:\n%s", tc.want, p)
+			}
+			if !strings.Contains(p, "ctx n/a") {
+				t.Fatalf("generic statusline should not fake token context:\n%s", p)
+			}
+			if strings.Contains(p, "claude") {
+				t.Fatalf("generic statusline leaked claude default:\n%s", p)
+			}
+		})
+	}
+}
+
 func TestGraphETA(t *testing.T) {
 	cases := []struct {
 		n    int
@@ -296,7 +334,7 @@ func TestMalformedStopHookReplaced(t *testing.T) {
 func TestInstallCodexAndCursorProjectFiles(t *testing.T) {
 	dir := t.TempDir()
 	// Exercise the target helpers directly so the test does not chdir the whole
-	// process or write AGENTS.md/.cursor into the checked-out repository.
+	// process or write AGENTS.md into the checked-out repository.
 	if err := installCodex(dir); err != nil {
 		t.Fatal(err)
 	}
@@ -314,25 +352,24 @@ func TestInstallCodexAndCursorProjectFiles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Count(string(agents), managedStart("codex")) != 1 || !strings.Contains(string(agents), "cockpit systems") {
+	if strings.Count(string(agents), managedStart("codex")) != 1 || !strings.Contains(string(agents), ".agent-flightdeck/skills/agent-flightdeck/SKILL.md") {
 		t.Fatalf("Codex AGENTS.md install not idempotent/useful: %s", agents)
 	}
-	skill, err := os.ReadFile(filepath.Join(dir, ".codex", "skills", "agent-flightdeck", "SKILL.md"))
+	skill, err := os.ReadFile(sharedSkillPath(dir, "agent-flightdeck"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(string(skill), "cockpit apply <n> --dry-run") {
-		t.Fatalf("Codex skill missing cockpit workflow: %s", skill)
+		t.Fatalf("shared skill missing cockpit workflow: %s", skill)
 	}
-	if _, err := os.Stat(filepath.Join(dir, ".claude", "skills", "agent-flightdeck", "SKILL.md")); !os.IsNotExist(err) {
-		t.Fatalf("Codex install should not write Claude skill: %v", err)
+	if !strings.Contains(string(agents), ".agent-flightdeck/skills/agent-flightdeck/SKILL.md") {
+		t.Fatalf("Codex pointer should reference shared skill: %s", agents)
 	}
-	cursor, err := os.ReadFile(filepath.Join(dir, ".cursor", "rules", "agent-flightdeck.mdc"))
-	if err != nil {
-		t.Fatal(err)
+	if _, err := os.Stat(filepath.Join(dir, ".codex", "skills", "agent-flightdeck", "SKILL.md")); !os.IsNotExist(err) {
+		t.Fatalf("Codex install should not write duplicate Codex skill: %v", err)
 	}
-	if !strings.HasPrefix(string(cursor), "---\n") || !strings.Contains(string(cursor), "---\n\n"+managedStart("cursor")) || strings.Count(string(cursor), managedStart("cursor")) != 1 || !strings.Contains(string(cursor), "alwaysApply: true") {
-		t.Fatalf("Cursor rule install not idempotent/useful: %s", cursor)
+	if _, err := os.Stat(filepath.Join(dir, ".cursor", "rules", "agent-flightdeck.mdc")); !os.IsNotExist(err) {
+		t.Fatalf("Cursor install should not write a Cursor rule: %v", err)
 	}
 
 	if err := uninstallCodex(dir); err != nil {
@@ -341,11 +378,8 @@ func TestInstallCodexAndCursorProjectFiles(t *testing.T) {
 	if err := uninstallCursor(dir); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(filepath.Join(dir, ".codex", "skills", "agent-flightdeck", "SKILL.md")); !os.IsNotExist(err) {
-		t.Fatalf("Codex skill should be removed on uninstall: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(dir, ".cursor", "rules", "agent-flightdeck.mdc")); !os.IsNotExist(err) {
-		t.Fatalf("Cursor rule should be removed on uninstall: %v", err)
+	if _, err := os.Stat(sharedSkillPath(dir, "agent-flightdeck")); err != nil {
+		t.Fatalf("shared skill should remain usable by all agents: %v", err)
 	}
 }
 
@@ -445,11 +479,14 @@ func TestMultiAgentDiscovery(t *testing.T) {
 		filepath.Join(dir, ".agents", "legacy"),
 		filepath.Join(dir, ".claude", "skills", "ship"),
 		filepath.Join(dir, ".codex", "skills", "audit"),
-		filepath.Join(dir, ".cursor", "rules", "frontend.mdc"),
+		filepath.Dir(sharedSkillPath(dir, "agent-flightdeck")),
 	} {
 		if err := os.MkdirAll(p, 0o755); err != nil {
 			t.Fatal(err)
 		}
+	}
+	if err := os.MkdirAll(filepath.Join(dir, ".cursor"), 0o755); err != nil {
+		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(dir, ".cursor", "mcp.json"), []byte(`{"mcpServers":{"browser":{}}}`), 0o644); err != nil {
 		t.Fatal(err)
@@ -1052,22 +1089,12 @@ func TestAppendAgentInstructions(t *testing.T) {
 	if err := appendAgentInstructions(dir, "## Graphify\n- query first", marker); err != nil {
 		t.Fatal(err)
 	}
-	for _, p := range []string{
-		filepath.Join(dir, "CLAUDE.md"),
-		filepath.Join(dir, "AGENTS.md"),
-		filepath.Join(dir, ".cursor", "rules", "agent-flightdeck.mdc"),
-	} {
-		b, err := os.ReadFile(p)
-		if err != nil {
-			t.Fatalf("missing %s: %v", p, err)
-		}
-		if !strings.Contains(string(b), "Graphify") {
-			t.Fatalf("%s missing rule: %s", p, b)
-		}
+	b, err := os.ReadFile(sharedSkillPath(dir, "agent-flightdeck"))
+	if err != nil {
+		t.Fatalf("missing shared skill: %v", err)
 	}
-	cursorRule, _ := os.ReadFile(filepath.Join(dir, ".cursor", "rules", "agent-flightdeck.mdc"))
-	if !strings.HasPrefix(string(cursorRule), "---\n") || !strings.Contains(string(cursorRule), "alwaysApply: true") {
-		t.Fatalf("Cursor rule should include frontmatter: %s", cursorRule)
+	if !strings.Contains(string(b), "Graphify") {
+		t.Fatalf("shared skill missing rule: %s", b)
 	}
 }
 
@@ -1084,17 +1111,21 @@ func TestMergeMCPServers(t *testing.T) {
 	}
 }
 
-func TestWriteSkillForClaudeAndCodex(t *testing.T) {
+func TestWriteSkillSharedForAllAgents(t *testing.T) {
 	dir := t.TempDir()
 	if err := writeSkill(dir, "review", "# Review\n"); err != nil {
 		t.Fatal(err)
 	}
+	if b, err := os.ReadFile(sharedSkillPath(dir, "review")); err != nil || !strings.Contains(string(b), "Review") {
+		t.Fatalf("shared skill not written: %q err=%v", b, err)
+	}
 	for _, p := range []string{
 		filepath.Join(dir, ".claude", "skills", "review", "SKILL.md"),
 		filepath.Join(dir, ".codex", "skills", "review", "SKILL.md"),
+		filepath.Join(dir, ".cursor", "rules", "review.mdc"),
 	} {
-		if b, err := os.ReadFile(p); err != nil || !strings.Contains(string(b), "Review") {
-			t.Fatalf("skill not written to %s: %q err=%v", p, b, err)
+		if _, err := os.Stat(p); !os.IsNotExist(err) {
+			t.Fatalf("skill should not be duplicated to %s: %v", p, err)
 		}
 	}
 }

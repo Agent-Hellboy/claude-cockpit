@@ -170,8 +170,7 @@ func RunApply(n int, cwd string, yes, dryRun bool) error {
 		fmt.Printf("  • Run: %s\n", cmd)
 	}
 	if plan.SkillName != "" && plan.SkillContent != "" {
-		fmt.Printf("  • Install skill: .claude/skills/%s/SKILL.md\n", plan.SkillName)
-		fmt.Printf("  • Install skill: .codex/skills/%s/SKILL.md\n", plan.SkillName)
+		fmt.Printf("  • Install shared skill: .agent-flightdeck/skills/%s/SKILL.md\n", plan.SkillName)
 	}
 	if plan.Notes != "" {
 		fmt.Printf("  • Note: %s\n", plan.Notes)
@@ -263,11 +262,7 @@ func executePlan(cwd, suggestion string, plan applyPlan) error {
 }
 
 func instructionPaths(cwd string) []string {
-	var paths []string
-	for _, agent := range codingAgents(cwd) {
-		paths = append(paths, agent.RuleFiles...)
-	}
-	return paths
+	return []string{sharedSkillPath(cwd, "agent-flightdeck")}
 }
 
 func suggestionMarker(suggestion string) string {
@@ -278,9 +273,9 @@ func suggestionMarker(suggestion string) string {
 	return "cockpit:" + strings.ReplaceAll(s, "\n", " ")
 }
 
-// appendAgentInstructions appends a marked section to the project instruction
-// files for Claude Code, Codex, and Cursor so accepted cockpit rules travel with
-// the repo's coding-agent surfaces.
+// appendAgentInstructions appends a marked section to the shared project skill
+// so Claude Code, Codex, Cursor, and other coding agents read one canonical
+// Agent Flightdeck guidance file.
 func appendAgentInstructions(cwd, section, marker string) error {
 	for _, path := range instructionPaths(cwd) {
 		if err := appendInstructionFile(path, section, marker); err != nil {
@@ -309,12 +304,6 @@ func appendInstructionFile(path, section, marker string) error {
 			b.WriteByte('\n')
 		}
 		b.WriteString("\n")
-	}
-	if strings.HasSuffix(path, ".mdc") && len(existing) == 0 {
-		b.WriteString("---\n")
-		b.WriteString("description: Agent Flightdeck accepted controls\n")
-		b.WriteString("alwaysApply: true\n")
-		b.WriteString("---\n\n")
 	}
 	b.WriteString(markerLine)
 	b.WriteString("\n")
@@ -355,18 +344,11 @@ func writeSkill(cwd, name, content string) error {
 	if name == "" {
 		return fmt.Errorf("empty skill name")
 	}
-	for _, dir := range []string{
-		filepath.Join(cwd, ".claude", "skills", name),
-		filepath.Join(cwd, ".codex", "skills", name),
-	} {
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			return err
-		}
-		if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte(strings.TrimSpace(content)+"\n"), 0o644); err != nil {
-			return err
-		}
+	dir := filepath.Dir(sharedSkillPath(cwd, name))
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
 	}
-	return nil
+	return os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte(strings.TrimSpace(content)+"\n"), 0o644)
 }
 
 // readSessionSignals returns the resolved session's own signals — never another

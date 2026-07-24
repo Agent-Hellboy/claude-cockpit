@@ -2,7 +2,7 @@
 //
 // Subcommands (wired into Claude Code's ~/.claude/settings.json where hooks exist):
 //
-//	cockpit statusline   # statusLine command — renders the two-row bar
+//	cockpit statusline   # render Claude live payloads or a generic agent bar
 //	cockpit analyze      # Stop hook — analyzes the session for token savings
 //	cockpit install      # register Claude Code hooks, or install codex/cursor/all
 //	cockpit uninstall    # remove cockpit settings, or uninstall codex/cursor/all

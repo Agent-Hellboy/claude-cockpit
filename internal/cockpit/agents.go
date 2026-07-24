@@ -14,42 +14,47 @@ type codingAgent struct {
 	ProjectDirs []string
 	UserDirs    []string
 	MCPFiles    []string
-	RuleFiles   []string
 }
 
 func codingAgents(cwd string) []codingAgent {
 	claudeDir := ConfigDir()
 	codexDir := CodexConfigDir()
 	cursorDir := CursorConfigDir()
+	sharedSkills := sharedSkillRoot(cwd)
 	return []codingAgent{
 		{
 			ID:          "claude",
 			Name:        "Claude Code",
 			ConfigDir:   claudeDir,
-			ProjectDirs: []string{filepath.Join(cwd, ".claude", "agents"), filepath.Join(cwd, ".claude", "skills")},
+			ProjectDirs: []string{sharedSkills, filepath.Join(cwd, ".claude", "agents"), filepath.Join(cwd, ".claude", "skills")},
 			UserDirs:    []string{filepath.Join(claudeDir, "agents"), filepath.Join(claudeDir, "skills"), filepath.Join(claudeDir, "plugins")},
 			MCPFiles:    []string{filepath.Join(cwd, ".mcp.json"), filepath.Join(claudeDir, "settings.json"), homeClaudeJSON()},
-			RuleFiles:   []string{filepath.Join(cwd, "CLAUDE.md")},
 		},
 		{
 			ID:          "codex",
 			Name:        "Codex",
 			ConfigDir:   codexDir,
-			ProjectDirs: []string{filepath.Join(cwd, ".codex", "agents"), filepath.Join(cwd, ".codex", "skills"), filepath.Join(cwd, ".agents")},
+			ProjectDirs: []string{sharedSkills, filepath.Join(cwd, ".codex", "agents"), filepath.Join(cwd, ".codex", "skills"), filepath.Join(cwd, ".agents")},
 			UserDirs:    []string{filepath.Join(codexDir, "agents"), filepath.Join(codexDir, "skills"), filepath.Join(codexDir, "plugins")},
 			MCPFiles:    []string{filepath.Join(cwd, ".mcp.json"), filepath.Join(codexDir, "mcp.json")},
-			RuleFiles:   []string{filepath.Join(cwd, "AGENTS.md")},
 		},
 		{
 			ID:          "cursor",
 			Name:        "Cursor",
 			ConfigDir:   cursorDir,
-			ProjectDirs: []string{filepath.Join(cwd, ".cursor", "rules")},
+			ProjectDirs: []string{sharedSkills},
 			UserDirs:    []string{filepath.Join(cursorDir, "rules")},
 			MCPFiles:    []string{filepath.Join(cwd, ".cursor", "mcp.json"), filepath.Join(cursorDir, "mcp.json")},
-			RuleFiles:   []string{filepath.Join(cwd, ".cursor", "rules", "agent-flightdeck.mdc")},
 		},
 	}
+}
+
+func sharedSkillRoot(cwd string) string {
+	return filepath.Join(cwd, ".agent-flightdeck", "skills")
+}
+
+func sharedSkillPath(cwd, name string) string {
+	return filepath.Join(sharedSkillRoot(cwd), name, "SKILL.md")
 }
 
 // CodexConfigDir returns the Codex config directory, honoring CODEX_HOME.

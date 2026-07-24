@@ -28,8 +28,8 @@ rules or skills into the right files.
 | Agent | Support |
 |---|---|
 | Claude Code | Live status line, `Stop`/`SessionEnd` hooks, `/cockpit`, MCP discovery, skills, subagents |
-| Codex | `cockpit install codex`, project/user skill and agent discovery, `AGENTS.md` rule propagation, shared `.mcp.json` discovery |
-| Cursor | `cockpit install cursor`, `.cursor/rules` discovery, `.cursor/rules/agent-flightdeck.mdc` rule propagation, Cursor MCP config discovery |
+| Codex | `cockpit install codex`, `AGENTS.md` pointer to the shared Agent Flightdeck skill, project/user skill and agent discovery, shared `.mcp.json` discovery |
+| Cursor | `cockpit install cursor`, shared Agent Flightdeck skill discovery, Cursor MCP config discovery |
 
 Claude Code is currently the live instrumentation source because it exposes the
 status-line and hook payloads this tool reads. Codex and Cursor support is
@@ -55,7 +55,7 @@ go install github.com/Agent-Hellboy/agent-flightdeck/cmd/cockpit@latest
 cockpit install
 ```
 
-Install project-level guidance for Codex and Cursor:
+Install the shared project skill for Codex and Cursor:
 
 ```bash
 cockpit install codex
@@ -74,9 +74,9 @@ cockpit install all
 - **Session memory:** the daemon scans changed Claude/Codex/Cursor session files
   hourly and writes compact JSONL summaries of what the user asked, when it
   happened, which tools ran, and which files were touched.
-- **Tool awareness:** suggestions can reference Claude Code commands, installed
-  Claude/Codex skills and agents, Cursor rules, MCP resources, graphify state,
-  and audited third-party tool gaps.
+- **Tool awareness:** suggestions can reference Claude Code commands, shared
+  Agent Flightdeck skills, installed Claude/Codex skills and agents, MCP
+  resources, graphify state, and audited third-party tool gaps.
 - **Non-blocking runtime:** analysis runs detached, so your turn does not wait on
   the advisor.
 
@@ -101,11 +101,9 @@ cockpit apply 3 --dry-run
 
 When you accept a fix, Agent Flightdeck may:
 
-- Append the accepted rule to `CLAUDE.md`, `AGENTS.md`, and
-  `.cursor/rules/agent-flightdeck.mdc`.
+- Append the accepted rule to `.agent-flightdeck/skills/agent-flightdeck/SKILL.md`.
 - Merge MCP servers into `.mcp.json`.
-- Write project skills to `.claude/skills/<name>/SKILL.md` and
-  `.codex/skills/<name>/SKILL.md`.
+- Write project skills to `.agent-flightdeck/skills/<name>/SKILL.md`.
 - Run safelisted install commands such as `brew`, `npm`, or `npx -y`.
 
 Restart Claude Code or run `/hooks` after MCP servers are added so they load.
@@ -128,13 +126,13 @@ cockpit memory auth --json # query summaries by text
 | Command | Purpose |
 |---|---|
 | `cockpit install` | Register Claude Code status line and hooks |
-| `cockpit install codex` | Add `AGENTS.md` guidance and a `.codex` Agent Flightdeck skill |
-| `cockpit install cursor` | Add `.cursor/rules/agent-flightdeck.mdc` |
-| `cockpit install all` | Install Claude Code hooks plus Codex and Cursor project guidance |
+| `cockpit install codex` | Add an `AGENTS.md` pointer and the shared Agent Flightdeck skill |
+| `cockpit install cursor` | Add the shared Agent Flightdeck skill, no Cursor rule |
+| `cockpit install all` | Install Claude Code hooks plus the shared project skill |
 | `cockpit uninstall` | Remove Claude Code cockpit settings and transient state |
-| `cockpit uninstall codex` | Remove managed Codex guidance and the Agent Flightdeck Codex skill |
-| `cockpit uninstall cursor` | Remove the managed Cursor rule |
-| `cockpit statusline` | Render the Claude Code status line |
+| `cockpit uninstall codex` | Remove the managed Codex pointer |
+| `cockpit uninstall cursor` | No-op for Cursor-specific files; Cursor uses the shared skill |
+| `cockpit statusline` | Render the cockpit status line for Claude Code, Codex, Cursor, or another agent |
 | `cockpit analyze` | Run the `Stop` hook analyzer |
 | `cockpit list` | Show numbered suggestions |
 | `cockpit apply N` | Accept suggestion N - updates agent instructions, MCP, skills |

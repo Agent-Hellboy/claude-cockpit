@@ -13,16 +13,18 @@ notes, so keep entries user-facing and concise. Add new work under
 
 ### Added
 - **Codex and Cursor project installation.** `cockpit install codex` now writes a
-  managed `AGENTS.md` section plus a `.codex/skills/agent-flightdeck` skill, and
-  `cockpit install cursor` writes a managed always-on Cursor rule at
-  `.cursor/rules/agent-flightdeck.mdc`. `cockpit install all` installs Claude
-  Code hooks plus both project guidance surfaces; matching uninstall targets
-  remove only managed Agent Flightdeck files/sections.
+  managed `AGENTS.md` pointer to the shared project skill, and `cockpit install
+  cursor` writes the same shared skill without creating Cursor rules. The
+  canonical guidance lives at `.agent-flightdeck/skills/agent-flightdeck/SKILL.md`
+  so Claude Code, Codex, Cursor, and other agents can refer to one file.
 - **Hourly background session memory.** The daemon now scans changed
   Claude/Codex/Cursor session files, extracts compact summaries of what the user
   asked, when it happened, which tools ran, and which files were touched, and
   saves bounded JSONL memory for downstream systems. `cockpit memory --json`
   retrieves it, and `cockpit memory --scan` runs a scan on demand.
+- **All-agent status line fallback.** `cockpit statusline` now keeps Claude
+  Code's live payload support and can also render a generic Codex/Cursor status
+  line when no Claude status payload is present.
 
 ### Changed
 - Renamed the project from `claude-cockpit` to **Agent Flightdeck**

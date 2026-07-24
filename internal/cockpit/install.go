@@ -90,11 +90,11 @@ func installCodex(cwd string) error {
 	if err := upsertManagedSection(filepath.Join(cwd, "AGENTS.md"), "codex", codexAgentInstructions()); err != nil {
 		return err
 	}
-	if err := writeCodexSkill(cwd, "agent-flightdeck", codexFlightdeckSkill()); err != nil {
+	if err := writeSharedSkill(cwd, "agent-flightdeck", flightdeckSkill()); err != nil {
 		return err
 	}
 	fmt.Printf("\033[32mInstalled.\033[0m Registered Agent Flightdeck for Codex in %s\n", cwd)
-	fmt.Println("Codex can now read AGENTS.md and the agent-flightdeck project skill.")
+	fmt.Println("Codex can now read AGENTS.md and the shared .agent-flightdeck skill.")
 	return nil
 }
 
@@ -102,11 +102,10 @@ func installCursor(cwd string) error {
 	if cwd == "" {
 		cwd, _ = os.Getwd()
 	}
-	path := filepath.Join(cwd, ".cursor", "rules", "agent-flightdeck.mdc")
-	if err := upsertManagedSection(path, "cursor", cursorFlightdeckRule()); err != nil {
+	if err := writeSharedSkill(cwd, "agent-flightdeck", flightdeckSkill()); err != nil {
 		return err
 	}
-	fmt.Printf("\033[32mInstalled.\033[0m Registered Agent Flightdeck for Cursor in %s\n", path)
+	fmt.Printf("\033[32mInstalled.\033[0m Registered shared Agent Flightdeck skill for Cursor in %s\n", sharedSkillPath(cwd, "agent-flightdeck"))
 	return nil
 }
 
@@ -205,8 +204,7 @@ func uninstallCodex(cwd string) error {
 	if err := removeManagedSection(filepath.Join(cwd, "AGENTS.md"), "codex"); err != nil {
 		return err
 	}
-	_ = os.RemoveAll(filepath.Join(cwd, ".codex", "skills", "agent-flightdeck"))
-	fmt.Printf("\033[32mUninstalled.\033[0m Removed Agent Flightdeck Codex files from %s\n", cwd)
+	fmt.Printf("\033[32mUninstalled.\033[0m Removed Agent Flightdeck Codex pointer from %s\n", cwd)
 	return nil
 }
 
@@ -214,11 +212,7 @@ func uninstallCursor(cwd string) error {
 	if cwd == "" {
 		cwd, _ = os.Getwd()
 	}
-	path := filepath.Join(cwd, ".cursor", "rules", "agent-flightdeck.mdc")
-	if err := removeManagedSection(path, "cursor"); err != nil {
-		return err
-	}
-	fmt.Printf("\033[32mUninstalled.\033[0m Removed Agent Flightdeck Cursor rule from %s\n", path)
+	fmt.Printf("\033[32mUninstalled.\033[0m Cursor uses the shared skill at %s; no Cursor rule is installed.\n", sharedSkillPath(cwd, "agent-flightdeck"))
 	return nil
 }
 
@@ -499,36 +493,18 @@ func mdcFrontmatterOnly(text string) bool {
 func codexAgentInstructions() string {
 	return `## Agent Flightdeck
 
-- Use ` + "`cockpit systems`" + ` at the start of substantial work to inspect configured agents, MCP servers, skills, Cursor rules, and graphify state.
-- Use ` + "`cockpit memory --json`" + ` when another tool needs compact background memory of what happened in recent sessions.
-- Use ` + "`cockpit status`" + `, ` + "`cockpit plan`" + `, and ` + "`cockpit checklist <topic>`" + ` when a session gets noisy, expensive, or unclear.
-- Use ` + "`cockpit list`" + ` to inspect pending controls and ` + "`cockpit apply <n> --dry-run`" + ` before wiring a suggested rule, MCP server, or skill into the project.
-- Keep accepted workflow controls consistent across ` + "`CLAUDE.md`" + `, ` + "`AGENTS.md`" + `, and Cursor rules.`
+- Use the shared project skill at ` + "`.agent-flightdeck/skills/agent-flightdeck/SKILL.md`" + ` for Agent Flightdeck cockpit controls.
+- Use ` + "`cockpit memory --json`" + ` when another tool needs compact background memory of what happened in recent sessions.`
 }
 
-func cursorFlightdeckRule() string {
-	return `---
-description: Agent Flightdeck cockpit controls
-alwaysApply: true
----
-
-# Agent Flightdeck
-
-- Use ` + "`cockpit systems`" + ` before broad repo work to inspect configured agents, MCP servers, skills, Cursor rules, and graphify state.
-- Use ` + "`cockpit memory`" + ` to retrieve compact background summaries of recent coding-agent sessions.
-- Use ` + "`cockpit status`" + `, ` + "`cockpit plan`" + `, and ` + "`cockpit checklist <topic>`" + ` when the session needs a clearer route or safer next control.
-- Use ` + "`cockpit list`" + ` to inspect pending controls and ` + "`cockpit apply <n> --dry-run`" + ` before accepting changes.
-- Keep accepted controls aligned with Claude Code and Codex project instructions.`
-}
-
-func codexFlightdeckSkill() string {
+func flightdeckSkill() string {
 	return `# Agent Flightdeck
 
-Use this skill when a Codex session should inspect or apply Agent Flightdeck controls.
+Use this shared project skill from Claude Code, Codex, Cursor, or any other coding agent when a session should inspect, retrieve, or apply Agent Flightdeck controls.
 
 ## Workflow
 
-1. Run ` + "`cockpit systems`" + ` to inspect configured coding agents, MCP servers, skills, Cursor rules, and graphify state.
+1. Run ` + "`cockpit systems`" + ` to inspect configured coding agents, MCP servers, skills, shared skills, and graphify state.
 2. Run ` + "`cockpit status`" + ` or ` + "`cockpit plan`" + ` when context, budget, or route drift needs attention.
 3. Run ` + "`cockpit memory --json`" + ` when a downstream system needs compact session memory.
 4. Run ` + "`cockpit checklist <topic>`" + ` for focused procedures such as context, budget, search, or faults.
@@ -539,15 +515,15 @@ Use this skill when a Codex session should inspect or apply Agent Flightdeck con
 
 - Treat cockpit suggestions as advisory.
 - Prefer dry runs before project writes.
-- Preserve existing Claude Code, Codex, and Cursor instruction files when applying a control.`
+- Keep accepted controls in this shared skill so Claude Code, Codex, and Cursor read the same guidance.`
 }
 
-func writeCodexSkill(cwd, name, content string) error {
+func writeSharedSkill(cwd, name, content string) error {
 	name = strings.Trim(name, "/")
 	if name == "" {
 		return fmt.Errorf("empty skill name")
 	}
-	dir := filepath.Join(cwd, ".codex", "skills", name)
+	dir := filepath.Dir(sharedSkillPath(cwd, name))
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}

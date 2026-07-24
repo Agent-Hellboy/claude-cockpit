@@ -68,6 +68,10 @@ func RunStatusline(r io.Reader, w io.Writer) {
 	data, _ := io.ReadAll(r)
 	var in slInput
 	_ = json.Unmarshal(data, &in)
+	if !hasStatuslinePayload(data, in) {
+		RunGenericStatusline(w, statuslineAgent())
+		return
+	}
 	writeState(in)
 	session := in.SessionID
 	patchSnapshotFromStatusline(in, session)
@@ -85,6 +89,90 @@ func RunStatusline(r io.Reader, w io.Writer) {
 	}
 	for _, line := range renderStatusline(in, classified, snap, st) {
 		fmt.Fprintln(w, line)
+	}
+}
+
+// RunGenericStatusline renders the same cockpit bar for agents that do not
+// provide Claude Code's live statusline JSON payload.
+func RunGenericStatusline(w io.Writer, agent string) {
+	cwd, err := os.Getwd()
+	if err != nil || cwd == "" {
+		cwd = "."
+	}
+	session := resolveSession(cwd)
+	snap := readSnapshot(session)
+	if snap.Phase == "" {
+		snap.Phase = string(PhaseCruise)
+	}
+	if snap.Cwd == "" {
+		snap.Cwd = cwd
+	}
+	if !snap.GraphifyGraph {
+		snap.GraphifyGraph = hasGraphifyGraph(cwd)
+	}
+	st, _ := readState()
+	if snap.Rate5hPct == 0 {
+		snap.Rate5hPct = st.FiveH
+	}
+	if snap.Rate7dPct == 0 {
+		snap.Rate7dPct = st.SevenD
+	}
+	hints := readSuggestions(session)
+	classified := parseSuggestionStore(hints, reportAge(session), snap, st)
+
+	var in slInput
+	in.Model.DisplayName = agentDisplayName(agent)
+	in.Workspace.CurrentDir = cwd
+	in.Worktree.Branch = gitBranch(cwd)
+	in.RateLimits.FiveHour.UsedPercentage = float64(snap.Rate5hPct)
+	in.RateLimits.SevenDay.UsedPercentage = float64(snap.Rate7dPct)
+	for _, line := range renderStatusline(in, classified, snap, st) {
+		fmt.Fprintln(w, line)
+	}
+}
+
+func hasStatuslinePayload(data []byte, in slInput) bool {
+	if strings.TrimSpace(string(data)) == "" {
+		return false
+	}
+	return in.SessionID != "" ||
+		in.Model.DisplayName != "" ||
+		in.Workspace.CurrentDir != "" ||
+		in.Cwd != "" ||
+		in.ContextWindow.ContextWindowSize > 0 ||
+		in.ContextWindow.TotalInputTokens > 0 ||
+		in.ContextWindow.UsedPercentage > 0
+}
+
+func statuslineAgent() string {
+	if v := strings.TrimSpace(os.Getenv("COCKPIT_AGENT")); v != "" {
+		return v
+	}
+	if v := strings.TrimSpace(os.Getenv("AGENT_FLIGHTDECK_AGENT")); v != "" {
+		return v
+	}
+	switch {
+	case os.Getenv("CURSOR_TRACE_ID") != "", os.Getenv("CURSOR_SESSION_ID") != "", os.Getenv("CURSOR_WORKSPACE_ID") != "":
+		return "cursor"
+	case os.Getenv("CODEX_HOME") != "", os.Getenv("CODEX_SANDBOX") != "", os.Getenv("CODEX_SESSION_ID") != "":
+		return "codex"
+	default:
+		return "agent"
+	}
+}
+
+func agentDisplayName(agent string) string {
+	switch strings.ToLower(strings.TrimSpace(agent)) {
+	case "claude", "claude-code", "claude code":
+		return "Claude"
+	case "codex":
+		return "Codex"
+	case "cursor":
+		return "Cursor"
+	case "":
+		return "Agent"
+	default:
+		return strings.TrimSpace(agent)
 	}
 }
 
@@ -254,7 +342,7 @@ func renderStatusline(in slInput, hints []classifiedSuggestion, snap cockpitSnap
 
 	modelName := in.Model.DisplayName
 	if modelName == "" {
-		modelName = "claude"
+		modelName = "Agent"
 	}
 	modelSeg := blue + bold + modelName + rst
 	if i := strings.Index(modelName, " ("); i >= 0 {
@@ -389,6 +477,9 @@ func phaseColor(phase string) string {
 }
 
 func formatCtxInstrument(pct int, used, total int64, warn string) string {
+	if total <= 0 && used <= 0 {
+		return dim + "ctx " + rst + dim + "n/a" + rst + warn
+	}
 	col := green
 	if pct >= 90 {
 		col = red
