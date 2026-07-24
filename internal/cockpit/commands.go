@@ -95,6 +95,8 @@ func RunSystems(w io.Writer, cwd string) {
 	}
 	fmt.Fprintln(w, "Cockpit systems (synoptic)")
 	fmt.Fprintln(w)
+	fmt.Fprintf(w, "  coding agents: %s\n", listCodingAgents(cwd))
+	fmt.Fprintln(w)
 	fmt.Fprintln(w, "  hooks:")
 	printHookLine(w, "statusline")
 	printHookLine(w, "Stop/analyze")

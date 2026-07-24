@@ -1,5 +1,5 @@
 version: 2
-project_name: claude-cockpit
+project_name: agent-flightdeck
 
 before:
   hooks:
@@ -18,7 +18,7 @@ builds:
 
 archives:
   - id: default
-    # Asset name must match install.sh: claude-cockpit_<os>_<arch>.tar.gz
+    # Asset name must match install.sh: agent-flightdeck_<os>_<arch>.tar.gz
     name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}"
     formats: [tar.gz]
     files:
@@ -31,4 +31,4 @@ checksum:
 release:
   github:
     owner: Agent-Hellboy
-    name: claude-cockpit
+    name: agent-flightdeck

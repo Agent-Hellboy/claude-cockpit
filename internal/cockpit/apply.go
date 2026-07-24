@@ -26,7 +26,7 @@ const applyInstr = `You are the cockpit fix applier. The user accepted a cockpit
 Read the SUGGESTION and optional SIGNALS, then reply with ONLY a single JSON object (no markdown fences) shaped like:
 {
   "summary": "one-line description of what will change",
-  "claude_md_section": "markdown block to append to CLAUDE.md for workflow/rules (empty string if not needed)",
+  "claude_md_section": "markdown block to append to project agent instruction files for workflow/rules (empty string if not needed)",
   "mcp_servers": { "server-name": { "command": "npx", "args": ["-y", "package"] } } or {},
   "shell_commands": ["safe non-destructive install commands"] or [],
   "skill_name": "kebab-case skill folder name or empty",
@@ -34,7 +34,7 @@ Read the SUGGESTION and optional SIGNALS, then reply with ONLY a single JSON obj
   "notes": "manual follow-ups the user must do, or empty"
 }
 Rules:
-- Prefer CLAUDE.md rules for workflow levers: graphify query, /loop polling, Explore subagent, model tiering, skills by name.
+- Prefer project instruction rules for workflow levers: graphify query, /loop polling, Explore subagent, model tiering, skills by name.
 - Only add mcp_servers when the suggestion clearly needs a real integration; use well-known packages only.
 - shell_commands: safe installs only (brew, npm -g, npx -y, curl to official repos). No secrets, no rm, no force flags.
 - skill_content: only when a concrete project skill should exist; keep it short and actionable.
@@ -159,7 +159,9 @@ func RunApply(n int, cwd string, yes, dryRun bool) error {
 	fmt.Println()
 	fmt.Println("Plan:", plan.Summary)
 	if plan.ClaudeMDSection != "" {
-		fmt.Printf("  • Update %s\n", claudeMDPath(cwd))
+		for _, p := range instructionPaths(cwd) {
+			fmt.Printf("  • Update %s\n", p)
+		}
 	}
 	for name := range plan.MCPServers {
 		fmt.Printf("  • Add MCP server: %s\n", name)
@@ -169,6 +171,7 @@ func RunApply(n int, cwd string, yes, dryRun bool) error {
 	}
 	if plan.SkillName != "" && plan.SkillContent != "" {
 		fmt.Printf("  • Install skill: .claude/skills/%s/SKILL.md\n", plan.SkillName)
+		fmt.Printf("  • Install skill: .codex/skills/%s/SKILL.md\n", plan.SkillName)
 	}
 	if plan.Notes != "" {
 		fmt.Printf("  • Note: %s\n", plan.Notes)
@@ -229,8 +232,8 @@ func parseApplyPlan(out string) (applyPlan, error) {
 
 func executePlan(cwd, suggestion string, plan applyPlan) error {
 	if plan.ClaudeMDSection != "" {
-		if err := appendClaudeMD(cwd, plan.ClaudeMDSection, suggestionMarker(suggestion)); err != nil {
-			return fmt.Errorf("update CLAUDE.md: %w", err)
+		if err := appendAgentInstructions(cwd, plan.ClaudeMDSection, suggestionMarker(suggestion)); err != nil {
+			return fmt.Errorf("update agent instructions: %w", err)
 		}
 	}
 	if len(plan.MCPServers) > 0 {
@@ -259,8 +262,12 @@ func executePlan(cwd, suggestion string, plan applyPlan) error {
 	return nil
 }
 
-func claudeMDPath(cwd string) string {
-	return filepath.Join(cwd, "CLAUDE.md")
+func instructionPaths(cwd string) []string {
+	var paths []string
+	for _, agent := range codingAgents(cwd) {
+		paths = append(paths, agent.RuleFiles...)
+	}
+	return paths
 }
 
 func suggestionMarker(suggestion string) string {
@@ -271,13 +278,28 @@ func suggestionMarker(suggestion string) string {
 	return "cockpit:" + strings.ReplaceAll(s, "\n", " ")
 }
 
-// appendClaudeMD appends a marked section so the same suggestion is not duplicated.
+// appendAgentInstructions appends a marked section to the project instruction
+// files for Claude Code, Codex, and Cursor so accepted cockpit rules travel with
+// the repo's coding-agent surfaces.
+func appendAgentInstructions(cwd, section, marker string) error {
+	for _, path := range instructionPaths(cwd) {
+		if err := appendInstructionFile(path, section, marker); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// appendClaudeMD is kept for older tests and callers.
 func appendClaudeMD(cwd, section, marker string) error {
-	path := claudeMDPath(cwd)
+	return appendInstructionFile(filepath.Join(cwd, "CLAUDE.md"), section, marker)
+}
+
+func appendInstructionFile(path, section, marker string) error {
 	markerLine := "<!-- " + marker + " -->"
 	existing, _ := os.ReadFile(path)
 	if strings.Contains(string(existing), markerLine) {
-		fmt.Printf("CLAUDE.md already has this cockpit rule (%s)\n", marker)
+		fmt.Printf("%s already has this cockpit rule (%s)\n", path, marker)
 		return nil
 	}
 	var b strings.Builder
@@ -290,8 +312,17 @@ func appendClaudeMD(cwd, section, marker string) error {
 	}
 	b.WriteString(markerLine)
 	b.WriteString("\n")
+	if strings.HasSuffix(path, ".mdc") && len(existing) == 0 {
+		b.WriteString("---\n")
+		b.WriteString("description: Agent Flightdeck accepted controls\n")
+		b.WriteString("alwaysApply: true\n")
+		b.WriteString("---\n\n")
+	}
 	b.WriteString(strings.TrimSpace(section))
 	b.WriteString("\n")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
 	return os.WriteFile(path, []byte(b.String()), 0o644)
 }
 
@@ -324,11 +355,18 @@ func writeSkill(cwd, name, content string) error {
 	if name == "" {
 		return fmt.Errorf("empty skill name")
 	}
-	dir := filepath.Join(cwd, ".claude", "skills", name)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return err
+	for _, dir := range []string{
+		filepath.Join(cwd, ".claude", "skills", name),
+		filepath.Join(cwd, ".codex", "skills", name),
+	} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return err
+		}
+		if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte(strings.TrimSpace(content)+"\n"), 0o644); err != nil {
+			return err
+		}
 	}
-	return os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte(strings.TrimSpace(content)+"\n"), 0o644)
+	return nil
 }
 
 // readSessionSignals returns the resolved session's own signals — never another

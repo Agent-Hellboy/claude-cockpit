@@ -535,18 +535,27 @@ func graphETA(files int) string {
 }
 
 func listSkills(cwd string) string {
-	return listDirs([]string{
-		filepath.Join(cwd, ".codex", "skills"),
-		filepath.Join(cwd, ".claude", "skills"),
-		filepath.Join(ConfigDir(), "skills"),
-	})
+	return listDirs(allProjectDirs(cwd, func(agent codingAgent) []string {
+		var dirs []string
+		for _, d := range append(agent.ProjectDirs, agent.UserDirs...) {
+			if strings.Contains(d, string(filepath.Separator)+"skills") {
+				dirs = append(dirs, d)
+			}
+		}
+		return dirs
+	}))
 }
 
 func listAgents(cwd string) string {
-	return listDirs([]string{
-		filepath.Join(cwd, ".claude", "agents"),
-		filepath.Join(ConfigDir(), "agents"),
-	})
+	return listDirs(allProjectDirs(cwd, func(agent codingAgent) []string {
+		var dirs []string
+		for _, d := range append(agent.ProjectDirs, agent.UserDirs...) {
+			if strings.Contains(d, string(filepath.Separator)+"agents") || strings.HasSuffix(d, string(filepath.Separator)+".agents") {
+				dirs = append(dirs, d)
+			}
+		}
+		return dirs
+	}))
 }
 
 func listDirs(dirs []string) string {
@@ -575,11 +584,11 @@ func listMCPServers(cwd string) string {
 		MCPServers map[string]any `json:"mcpServers"`
 	}
 	set := map[string]bool{}
-	for _, p := range []string{
-		filepath.Join(cwd, ".mcp.json"),
-		filepath.Join(ConfigDir(), "settings.json"),
-		homeClaudeJSON(),
-	} {
+	var paths []string
+	for _, agent := range codingAgents(cwd) {
+		paths = append(paths, agent.MCPFiles...)
+	}
+	for _, p := range paths {
 		if p == "" {
 			continue
 		}
@@ -595,17 +604,20 @@ func listMCPServers(cwd string) string {
 			set[name] = true
 		}
 	}
-	return sortedSet(set)
+	return sortedNames(set)
 }
 
 func listPlugins(cwd string) string {
 	set := map[string]bool{}
-	for _, root := range []string{
-		filepath.Join(cwd, ".claude", "skills"),
-		filepath.Join(ConfigDir(), "skills"),
-		filepath.Join(cwd, ".claude", "plugins"),
-		filepath.Join(ConfigDir(), "plugins"),
-	} {
+	for _, root := range allProjectDirs(cwd, func(agent codingAgent) []string {
+		var dirs []string
+		for _, d := range append(agent.ProjectDirs, agent.UserDirs...) {
+			if strings.Contains(d, string(filepath.Separator)+"plugins") || strings.Contains(d, string(filepath.Separator)+"skills") {
+				dirs = append(dirs, d)
+			}
+		}
+		return dirs
+	}) {
 		entries, err := os.ReadDir(root)
 		if err != nil {
 			continue
@@ -619,7 +631,7 @@ func listPlugins(cwd string) string {
 			}
 		}
 	}
-	return sortedSet(set)
+	return sortedNames(set)
 }
 
 func homeClaudeJSON() string {
@@ -628,15 +640,6 @@ func homeClaudeJSON() string {
 		return ""
 	}
 	return filepath.Join(home, ".claude.json")
-}
-
-func sortedSet(set map[string]bool) string {
-	names := make([]string, 0, len(set))
-	for k := range set {
-		names = append(names, k)
-	}
-	sort.Strings(names)
-	return strings.Join(names, " ")
 }
 
 func bumpCounter(sid string) int {

@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# claude-cockpit installer — downloads a prebuilt, dependency-free binary and
-# self-registers it into Claude Code. No Go, no jq, no runtime required.
+# agent-flightdeck installer — downloads a prebuilt, dependency-free binary and
+# self-registers it into Claude Code where hook support exists. No Go, no jq, no runtime required.
 #
-#   curl -fsSL https://raw.githubusercontent.com/Agent-Hellboy/claude-cockpit/main/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/Agent-Hellboy/agent-flightdeck/main/install.sh | bash
 #
 # Env overrides: COCKPIT_VERSION (e.g. v0.1.0), CLAUDE_CONFIG_DIR.
 set -euo pipefail
 
-REPO="Agent-Hellboy/claude-cockpit"
+REPO="Agent-Hellboy/agent-flightdeck"
 CLAUDE_DIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 BIN_DIR="$CLAUDE_DIR/bin"
 
@@ -32,7 +32,7 @@ case "$os" in
 esac
 
 ver="${COCKPIT_VERSION:-latest}"
-asset="claude-cockpit_${os}_${arch}.tar.gz"
+asset="agent-flightdeck_${os}_${arch}.tar.gz"
 if [ "$ver" = "latest" ]; then
   url="https://github.com/$REPO/releases/latest/download/$asset"
 else

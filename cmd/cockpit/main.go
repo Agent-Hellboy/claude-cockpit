@@ -1,13 +1,13 @@
-// Command cockpit is a status line + session optimizer for Claude Code.
+// Command cockpit is a status line + session optimizer for coding agents.
 //
-// Subcommands (wired into ~/.claude/settings.json):
+// Subcommands (wired into Claude Code's ~/.claude/settings.json where hooks exist):
 //
 //	cockpit statusline   # statusLine command — renders the two-row bar
 //	cockpit analyze      # Stop hook — analyzes the session for token savings
-//	cockpit install      # register statusLine + Stop hook in settings.json
+//	cockpit install      # register Claude Code statusLine + Stop hook
 //	cockpit uninstall    # remove cockpit settings and transient state
 //	cockpit list         # show numbered suggestions
-//	cockpit apply N      # accept suggestion N — updates CLAUDE.md, MCP, skills
+//	cockpit apply N      # accept suggestion N — updates agent rules, MCP, skills
 //	cockpit systems      # ECAM synoptic of hooks, MCP, skills, graphify
 //	cockpit checklist T  # ECAM procedure for a topic (context, budget, search)
 //	cockpit plan         # FMS-style session route and deviation
@@ -27,7 +27,7 @@ import (
 	"os"
 	"strconv"
 
-	"github.com/Agent-Hellboy/claude-cockpit/internal/cockpit"
+	"github.com/Agent-Hellboy/agent-flightdeck/internal/cockpit"
 )
 
 // version is set at build time via -ldflags "-X main.version=...".

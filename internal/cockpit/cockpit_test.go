@@ -376,6 +376,43 @@ func TestGatherSignalsAndCadence(t *testing.T) {
 	}
 }
 
+func TestMultiAgentDiscovery(t *testing.T) {
+	dir := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(home, ".claude"))
+	t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
+	t.Setenv("CURSOR_CONFIG_DIR", filepath.Join(home, ".cursor"))
+
+	for _, p := range []string{
+		filepath.Join(dir, ".claude", "agents", "reviewer"),
+		filepath.Join(dir, ".codex", "agents", "planner"),
+		filepath.Join(dir, ".agents", "legacy"),
+		filepath.Join(dir, ".claude", "skills", "ship"),
+		filepath.Join(dir, ".codex", "skills", "audit"),
+		filepath.Join(dir, ".cursor", "rules", "frontend.mdc"),
+	} {
+		if err := os.MkdirAll(p, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".cursor", "mcp.json"), []byte(`{"mcpServers":{"browser":{}}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := listAgents(dir); !strings.Contains(got, "planner") || !strings.Contains(got, "reviewer") || !strings.Contains(got, "legacy") {
+		t.Fatalf("multi-agent discovery missed agents: %q", got)
+	}
+	if got := listSkills(dir); !strings.Contains(got, "audit") || !strings.Contains(got, "ship") {
+		t.Fatalf("multi-agent discovery missed skills: %q", got)
+	}
+	if got := listMCPServers(dir); !strings.Contains(got, "browser") {
+		t.Fatalf("Cursor MCP discovery missed server: %q", got)
+	}
+	if got := listCodingAgents(dir); !strings.Contains(got, "claude:ready") || !strings.Contains(got, "codex:ready") || !strings.Contains(got, "cursor:ready") {
+		t.Fatalf("coding agent summary wrong: %q", got)
+	}
+}
+
 // The status line writes the authoritative context window; the analyzer should
 // prefer it over inferring from the model name.
 func TestContextWindowBridge(t *testing.T) {
@@ -882,6 +919,31 @@ func TestAppendClaudeMD(t *testing.T) {
 	}
 }
 
+func TestAppendAgentInstructions(t *testing.T) {
+	dir := t.TempDir()
+	marker := suggestionMarker("🔍 use graphify")
+	if err := appendAgentInstructions(dir, "## Graphify\n- query first", marker); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []string{
+		filepath.Join(dir, "CLAUDE.md"),
+		filepath.Join(dir, "AGENTS.md"),
+		filepath.Join(dir, ".cursor", "rules", "cockpit.mdc"),
+	} {
+		b, err := os.ReadFile(p)
+		if err != nil {
+			t.Fatalf("missing %s: %v", p, err)
+		}
+		if !strings.Contains(string(b), "Graphify") {
+			t.Fatalf("%s missing rule: %s", p, b)
+		}
+	}
+	cursorRule, _ := os.ReadFile(filepath.Join(dir, ".cursor", "rules", "cockpit.mdc"))
+	if !strings.Contains(string(cursorRule), "alwaysApply: true") {
+		t.Fatalf("Cursor rule should include frontmatter: %s", cursorRule)
+	}
+}
+
 func TestMergeMCPServers(t *testing.T) {
 	dir := t.TempDir()
 	if err := mergeMCPServers(dir, map[string]any{
@@ -892,6 +954,21 @@ func TestMergeMCPServers(t *testing.T) {
 	b, _ := os.ReadFile(filepath.Join(dir, ".mcp.json"))
 	if !strings.Contains(string(b), "playwright") {
 		t.Fatalf("mcp not written: %s", b)
+	}
+}
+
+func TestWriteSkillForClaudeAndCodex(t *testing.T) {
+	dir := t.TempDir()
+	if err := writeSkill(dir, "review", "# Review\n"); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []string{
+		filepath.Join(dir, ".claude", "skills", "review", "SKILL.md"),
+		filepath.Join(dir, ".codex", "skills", "review", "SKILL.md"),
+	} {
+		if b, err := os.ReadFile(p); err != nil || !strings.Contains(string(b), "Review") {
+			t.Fatalf("skill not written to %s: %q err=%v", p, b, err)
+		}
 	}
 }
 

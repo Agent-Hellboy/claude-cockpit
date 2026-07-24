@@ -274,7 +274,7 @@ func slashCommandPath() string {
 // COCKPIT_ASSUME_YES=1 tells `apply` there is no interactive stdin here, so it
 // must not wait on a y/N prompt that would read EOF and cancel.
 const cockpitCommandMD = "---\n" +
-	"description: Manage claude-cockpit — synoptic, status, suggestions, apply, daemon\n" +
+	"description: Manage Agent Flightdeck — synoptic, status, suggestions, apply, daemon\n" +
 	"argument-hint: \"[systems | status | list | apply <n> | checklist <topic> | plan | debrief | daemon status]\"\n" +
 	"allowed-tools: Bash\n" +
 	"---\n\n" +

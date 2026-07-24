@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to claude-cockpit are documented in this file.
+All notable changes to Agent Flightdeck are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
@@ -10,6 +10,11 @@ notes, so keep entries user-facing and concise. Add new work under
 `[Unreleased]`; on release, rename it to the version with a date.
 
 ## [Unreleased]
+
+### Changed
+- Renamed the project from `claude-cockpit` to **Agent Flightdeck**
+  (`agent-flightdeck`) and broadened project discovery/apply paths for Claude
+  Code, Codex, and Cursor.
 
 ## [0.2.1] - 2026-07-09
 
@@ -164,9 +169,9 @@ notes, so keep entries user-facing and concise. Add new work under
 
 ## [0.1.5] and earlier
 
-See the [GitHub releases](https://github.com/Agent-Hellboy/claude-cockpit/releases)
+See the [GitHub releases](https://github.com/Agent-Hellboy/agent-flightdeck/releases)
 page for notes on releases prior to the introduction of this changelog.
 
-[Unreleased]: https://github.com/Agent-Hellboy/claude-cockpit/compare/v0.1.7...HEAD
-[0.1.7]: https://github.com/Agent-Hellboy/claude-cockpit/compare/v0.1.6...v0.1.7
-[0.1.6]: https://github.com/Agent-Hellboy/claude-cockpit/compare/v0.1.5...v0.1.6
+[Unreleased]: https://github.com/Agent-Hellboy/agent-flightdeck/compare/v0.1.7...HEAD
+[0.1.7]: https://github.com/Agent-Hellboy/agent-flightdeck/compare/v0.1.6...v0.1.7
+[0.1.6]: https://github.com/Agent-Hellboy/agent-flightdeck/compare/v0.1.5...v0.1.6
