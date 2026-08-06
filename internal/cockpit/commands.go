@@ -97,10 +97,15 @@ func RunSystems(w io.Writer, cwd string) {
 	fmt.Fprintln(w)
 	fmt.Fprintf(w, "  coding agents: %s\n", listCodingAgents(cwd))
 	fmt.Fprintln(w)
-	fmt.Fprintln(w, "  hooks:")
+	fmt.Fprintln(w, "  Claude hooks:")
 	printHookLine(w, "statusline")
 	printHookLine(w, "Stop/analyze")
 	printHookLine(w, "SessionEnd/cleanup")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "  agent surfaces:")
+	printIntegrationLine(w, "Codex statusline", codexStatusLineInstalled())
+	printIntegrationLine(w, "Codex /prompts:cockpit", fileExists(codexPromptPath()))
+	printIntegrationLine(w, "Cursor /cockpit", fileExists(cursorCommandPath(cwd)))
 	fmt.Fprintln(w)
 	graph := hasGraphifyGraph(cwd)
 	graphMark := "✗"
@@ -130,6 +135,14 @@ func RunSystems(w io.Writer, cwd string) {
 
 func printHookLine(w io.Writer, name string) {
 	fmt.Fprintf(w, "    %-16s ✓\n", name)
+}
+
+func printIntegrationLine(w io.Writer, name string, installed bool) {
+	mark := "✗"
+	if installed {
+		mark = "✓"
+	}
+	fmt.Fprintf(w, "    %-24s %s\n", name, mark)
 }
 
 // RunStatus prints ECAM STATUS — deferred items before next session.

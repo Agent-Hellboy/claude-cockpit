@@ -333,6 +333,8 @@ func TestMalformedStopHookReplaced(t *testing.T) {
 
 func TestInstallCodexAndCursorProjectFiles(t *testing.T) {
 	dir := t.TempDir()
+	codexHome := filepath.Join(dir, "codex-home")
+	t.Setenv("CODEX_HOME", codexHome)
 	// Exercise the target helpers directly so the test does not chdir the whole
 	// process or write AGENTS.md into the checked-out repository.
 	if err := installCodex(dir); err != nil {
@@ -365,11 +367,17 @@ func TestInstallCodexAndCursorProjectFiles(t *testing.T) {
 	if !strings.Contains(string(agents), ".agent-flightdeck/skills/agent-flightdeck/SKILL.md") {
 		t.Fatalf("Codex pointer should reference shared skill: %s", agents)
 	}
-	if _, err := os.Stat(filepath.Join(dir, ".codex", "skills", "agent-flightdeck", "SKILL.md")); !os.IsNotExist(err) {
-		t.Fatalf("Codex install should not write duplicate Codex skill: %v", err)
+	prompt, err := os.ReadFile(codexPromptPath())
+	if err != nil || !strings.Contains(string(prompt), "agent-flightdeck:codex-command:start") {
+		t.Fatalf("Codex install should write the managed cockpit prompt: %v\n%s", err, prompt)
 	}
-	if _, err := os.Stat(filepath.Join(dir, ".cursor", "rules", "agent-flightdeck.mdc")); !os.IsNotExist(err) {
-		t.Fatalf("Cursor install should not write a Cursor rule: %v", err)
+	config, err := os.ReadFile(codexConfigPath())
+	if err != nil || !strings.Contains(string(config), "status_line = "+codexStatusLineItems) {
+		t.Fatalf("Codex install should configure the native status line: %v\n%s", err, config)
+	}
+	cursorCommand, err := os.ReadFile(cursorCommandPath(dir))
+	if err != nil || !strings.Contains(string(cursorCommand), "/cockpit status") {
+		t.Fatalf("Cursor install should write the cockpit command: %v\n%s", err, cursorCommand)
 	}
 
 	if err := uninstallCodex(dir); err != nil {
@@ -380,6 +388,105 @@ func TestInstallCodexAndCursorProjectFiles(t *testing.T) {
 	}
 	if _, err := os.Stat(sharedSkillPath(dir, "agent-flightdeck")); err != nil {
 		t.Fatalf("shared skill should remain usable by all agents: %v", err)
+	}
+	if _, err := os.Stat(codexPromptPath()); !os.IsNotExist(err) {
+		t.Fatalf("Codex prompt should be removed on uninstall: %v", err)
+	}
+	if _, err := os.Stat(codexConfigPath()); !os.IsNotExist(err) {
+		t.Fatalf("Codex config created only by Flightdeck should be removed on uninstall: %v", err)
+	}
+	if _, err := os.Stat(cursorCommandPath(dir)); !os.IsNotExist(err) {
+		t.Fatalf("Cursor command should be removed on uninstall: %v", err)
+	}
+}
+
+func TestCodexInstallPreservesExistingPromptAndStatusLine(t *testing.T) {
+	dir := t.TempDir()
+	codexHome := filepath.Join(dir, "codex-home")
+	t.Setenv("CODEX_HOME", codexHome)
+	if err := os.MkdirAll(codexHome, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(codexPromptPath()), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(codexPromptPath(), []byte("user prompt\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	originalConfig := "[tui]\nstatus_line = [\"current-dir\"]\n"
+	if err := os.WriteFile(codexConfigPath(), []byte(originalConfig), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := installCodex(dir); err != nil {
+		t.Fatal(err)
+	}
+	prompt, err := os.ReadFile(codexPromptPath())
+	if err != nil || string(prompt) != "user prompt\n" {
+		t.Fatalf("existing Codex prompt was overwritten: %v %q", err, prompt)
+	}
+	config, err := os.ReadFile(codexConfigPath())
+	if err != nil || string(config) != originalConfig {
+		t.Fatalf("existing Codex status line was overwritten: %v %q", err, config)
+	}
+
+	if err := uninstallCodex(dir); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(codexPromptPath()); err != nil {
+		t.Fatalf("user-owned prompt should survive uninstall: %v", err)
+	}
+	config, err = os.ReadFile(codexConfigPath())
+	if err != nil || string(config) != originalConfig {
+		t.Fatalf("user-owned status line should survive uninstall: %v %q", err, config)
+	}
+}
+
+func TestCodexStatusLineConfigLifecycle(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+
+	if err := upsertCodexStatusLine(path); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Count(string(b), codexStatusMarkerStart) != 1 || !strings.Contains(string(b), "[tui]") {
+		t.Fatalf("unexpected new Codex config: %s", b)
+	}
+	if err := upsertCodexStatusLine(path); err != nil {
+		t.Fatal(err)
+	}
+	b2, _ := os.ReadFile(path)
+	if strings.Count(string(b2), codexStatusMarkerStart) != 1 {
+		t.Fatalf("status line install is not idempotent: %s", b2)
+	}
+	if err := removeCodexStatusLine(path); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("managed-only Codex config should be removed: %v", err)
+	}
+
+	existing := "model = \"gpt-5\"\n\n[tui]\nnotifications = true\n\n[history]\npersistence = \"save-all\"\n"
+	if err := os.WriteFile(path, []byte(existing), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := upsertCodexStatusLine(path); err != nil {
+		t.Fatal(err)
+	}
+	b, _ = os.ReadFile(path)
+	if !strings.Contains(string(b), "notifications = true") || !strings.Contains(string(b), "[history]") || !strings.Contains(string(b), "status_line = "+codexStatusLineItems) {
+		t.Fatalf("status line insertion damaged TOML tables: %s", b)
+	}
+	if err := removeCodexStatusLine(path); err != nil {
+		t.Fatal(err)
+	}
+	b, _ = os.ReadFile(path)
+	if strings.Contains(string(b), codexStatusMarkerStart) || !strings.Contains(string(b), "notifications = true") || !strings.Contains(string(b), "[history]") {
+		t.Fatalf("status line removal damaged user config: %s", b)
 	}
 }
 
