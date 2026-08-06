@@ -11,6 +11,27 @@ notes, so keep entries user-facing and concise. Add new work under
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-08-06
+
+### Added
+- **Codex native cockpit integration.** `cockpit install codex` now configures
+  Codex's built-in `[tui].status_line` fields and installs a saved
+  `CODEX_HOME/prompts/cockpit.md` prompt, exposed in Codex as
+  `/prompts:cockpit` (typing `/cockpit` surfaces it in the command picker).
+- **Cursor `/cockpit` command.** `cockpit install cursor` now writes a native
+  `.cursor/commands/cockpit.md` command that routes cockpit controls through
+  Cursor's agent terminal.
+- **Cross-agent integration visibility.** `cockpit systems` reports the Codex
+  status line, Codex cockpit prompt, and Cursor cockpit command separately from
+  Claude Code's hooks.
+
+### Changed
+- Codex and Cursor installers preserve user-owned prompts, status-line fields,
+  and commands. Only files and config blocks marked as Agent Flightdeck-owned
+  are refreshed or removed.
+- Documentation now distinguishes Claude Code's rich command-backed status line
+  from Codex's native fixed-field status line and Cursor's command integration.
+
 ## [0.3.0] - 2026-07-24
 
 ### Added

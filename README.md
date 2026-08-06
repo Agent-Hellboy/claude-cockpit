@@ -25,13 +25,16 @@ rules or skills into the right files.
 
 | Agent | Support |
 |---|---|
-| Claude Code | Live status line, `Stop`/`SessionEnd` hooks, `/cockpit`, MCP discovery, skills, subagents |
-| Codex | `cockpit install codex`, `AGENTS.md` pointer to the shared Agent Flightdeck skill, project/user skill and agent discovery, shared `.mcp.json` discovery |
-| Cursor | `cockpit install cursor`, shared Agent Flightdeck skill discovery, Cursor MCP config discovery |
+| Claude Code | Rich live status line, `Stop`/`SessionEnd` hooks, `/cockpit`, MCP discovery, skills, subagents |
+| Codex | Native `[tui].status_line` fields, `/prompts:cockpit` saved prompt, `AGENTS.md`, shared skill, agent discovery, shared `.mcp.json` discovery |
+| Cursor | `/cockpit` project command, shared Agent Flightdeck skill, Cursor MCP config discovery |
 
-Claude Code is currently the live instrumentation source because it exposes the
-status-line and hook payloads this tool reads. Codex and Cursor support is
-file-based today.
+Claude Code is the only client with a command-backed rich status-line and hook
+payload API, so it receives the full Flightdeck renderer and live advisor hooks.
+Codex receives its native built-in status fields plus a saved cockpit prompt;
+Cursor receives a native project `/cockpit` command. Both clients can use the
+shared skill and session-memory integrations, but neither currently exposes a
+public API for embedding Flightdeck's custom ANSI renderer in its own status bar.
 
 ## Install
 
@@ -45,9 +48,12 @@ Agent Flightdeck for the ones it finds.
 The installer downloads the matching macOS or Linux release binary, installs it
 to `~/.claude/bin/cockpit`, then runs `cockpit install`. For Claude Code it
 merges the `statusLine` plus hooks into `~/.claude/settings.json`; for Codex it
-writes an `AGENTS.md` pointer; for Cursor it writes the shared Agent Flightdeck
-skill. Existing Claude settings and hooks are preserved, with a timestamped
-backup. Restart Claude Code, or run `/hooks`, so Claude hooks load.
+writes an `AGENTS.md` pointer, a saved prompt at `CODEX_HOME/prompts/cockpit.md`,
+and native status fields in `CODEX_HOME/config.toml`; for Cursor it writes the
+shared skill and `.cursor/commands/cockpit.md`. Existing Claude settings, Codex
+prompts/status fields, and Cursor commands are preserved when they are
+user-owned. Restart each client after installation so it reloads commands and
+configuration.
 
 Build from source:
 
@@ -66,8 +72,12 @@ cockpit install all
 
 ## What it shows
 
-- **Status line:** project, git state, model, effort, context fill, token churn,
-  cache/output tokens, rate limits, and cost.
+- **Claude status line:** project, git state, model, effort, context fill, token
+  churn, cache/output tokens, rate limits, and cost.
+- **Codex status line:** the native model/reasoning, directory, branch, context,
+  rate-limit, and fast-mode fields configured by `cockpit install codex`.
+- **Codex/Cursor cockpit command:** run the same `cockpit systems`, `status`,
+  `list`, `checklist`, `plan`, `debrief`, and daemon controls inside the agent.
 - **Session advisor:** a background `haiku` check that surfaces the highest-value
   next controls for the current session.
 - **Session memory:** the daemon scans changed Claude/Codex/Cursor session files
@@ -119,12 +129,12 @@ cockpit memory auth --json # query summaries by text
 | Command | Purpose |
 |---|---|
 | `cockpit install` | Auto-detect present coding agents and register their integrations |
-| `cockpit install codex` | Add an `AGENTS.md` pointer and the shared Agent Flightdeck skill |
-| `cockpit install cursor` | Add the shared Agent Flightdeck skill, no Cursor rule |
-| `cockpit install all` | Install Claude Code hooks plus the shared project skill |
+| `cockpit install codex` | Add the `AGENTS.md` pointer, shared skill, native Codex status fields, and `/prompts:cockpit` prompt |
+| `cockpit install cursor` | Add the shared skill and native Cursor `/cockpit` project command |
+| `cockpit install all` | Install all detected integrations, or explicitly target Claude, Codex, and Cursor |
 | `cockpit uninstall` | Remove Claude Code cockpit settings and transient state |
-| `cockpit uninstall codex` | Remove the managed Codex pointer |
-| `cockpit uninstall cursor` | No-op for Cursor-specific files; Cursor uses the shared skill |
+| `cockpit uninstall codex` | Remove the managed Codex pointer, prompt, and status fields |
+| `cockpit uninstall cursor` | Remove the managed Cursor `/cockpit` command; keep the shared skill |
 | `cockpit statusline` | Render the cockpit status line for Claude Code, Codex, Cursor, or another agent |
 | `cockpit analyze` | Run the `Stop` hook analyzer |
 | `cockpit list` | Show numbered suggestions |

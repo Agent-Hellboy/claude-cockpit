@@ -141,8 +141,17 @@ func installCodex(cwd string) error {
 	if err := writeSharedSkill(cwd, "agent-flightdeck", flightdeckSkill()); err != nil {
 		return err
 	}
+	if err := upsertCodexStatusLine(codexConfigPath()); err != nil {
+		return fmt.Errorf("configure Codex status line: %w", err)
+	}
+	if wrote, err := writeCodexPrompt(); err != nil {
+		return fmt.Errorf("install Codex cockpit prompt: %w", err)
+	} else if !wrote {
+		fmt.Printf("Preserved existing Codex prompt -> %s\n", codexPromptPath())
+	}
 	fmt.Printf("\033[32mInstalled.\033[0m Registered Agent Flightdeck for Codex in %s\n", cwd)
-	fmt.Println("Codex can now read AGENTS.md and the shared .agent-flightdeck skill.")
+	fmt.Printf("Codex status line configured in %s\n", codexConfigPath())
+	fmt.Printf("Codex cockpit prompt available as /prompts:cockpit -> %s\n", codexPromptPath())
 	return nil
 }
 
@@ -153,7 +162,13 @@ func installCursor(cwd string) error {
 	if err := writeSharedSkill(cwd, "agent-flightdeck", flightdeckSkill()); err != nil {
 		return err
 	}
+	if wrote, err := writeCursorCommand(cwd); err != nil {
+		return fmt.Errorf("install Cursor cockpit command: %w", err)
+	} else if !wrote {
+		fmt.Printf("Preserved existing Cursor command -> %s\n", cursorCommandPath(cwd))
+	}
 	fmt.Printf("\033[32mInstalled.\033[0m Registered shared Agent Flightdeck skill for Cursor in %s\n", sharedSkillPath(cwd, "agent-flightdeck"))
+	fmt.Printf("Cursor cockpit command available as /cockpit -> %s\n", cursorCommandPath(cwd))
 	return nil
 }
 
@@ -252,7 +267,13 @@ func uninstallCodex(cwd string) error {
 	if err := removeManagedSection(filepath.Join(cwd, "AGENTS.md"), "codex"); err != nil {
 		return err
 	}
-	fmt.Printf("\033[32mUninstalled.\033[0m Removed Agent Flightdeck Codex pointer from %s\n", cwd)
+	if err := removeOwnedFile(codexPromptPath(), codexCommandMarkerStart); err != nil {
+		return err
+	}
+	if err := removeCodexStatusLine(codexConfigPath()); err != nil {
+		return err
+	}
+	fmt.Printf("\033[32mUninstalled.\033[0m Removed Agent Flightdeck Codex integration from %s\n", cwd)
 	return nil
 }
 
@@ -260,7 +281,10 @@ func uninstallCursor(cwd string) error {
 	if cwd == "" {
 		cwd, _ = os.Getwd()
 	}
-	fmt.Printf("\033[32mUninstalled.\033[0m Cursor uses the shared skill at %s; no Cursor rule is installed.\n", sharedSkillPath(cwd, "agent-flightdeck"))
+	if err := removeOwnedFile(cursorCommandPath(cwd), cursorCommandMarkerStart); err != nil {
+		return err
+	}
+	fmt.Printf("\033[32mUninstalled.\033[0m Removed Cursor cockpit command; shared skill remains at %s\n", sharedSkillPath(cwd, "agent-flightdeck"))
 	return nil
 }
 
@@ -542,6 +566,7 @@ func codexAgentInstructions() string {
 	return `## Agent Flightdeck
 
 - Use the shared project skill at ` + "`.agent-flightdeck/skills/agent-flightdeck/SKILL.md`" + ` for Agent Flightdeck cockpit controls.
+- In Codex, use /prompts:cockpit (or type /cockpit and select the saved cockpit prompt) for the in-session cockpit command.
 - Use ` + "`cockpit memory --json`" + ` when another tool needs compact background memory of what happened in recent sessions.`
 }
 
@@ -558,6 +583,11 @@ Use this shared project skill from Claude Code, Codex, Cursor, or any other codi
 4. Run ` + "`cockpit checklist <topic>`" + ` for focused procedures such as context, budget, search, or faults.
 5. Run ` + "`cockpit list`" + ` to inspect pending suggestions.
 6. Use ` + "`cockpit apply <n> --dry-run`" + ` before accepting a suggested instruction, MCP, or skill change.
+
+Agent surfaces:
+
+- Codex: use /prompts:cockpit (or type /cockpit and select it) to run cockpit controls; the native Codex status line is configured by the installer.
+- Cursor: use /cockpit from the project command picker.
 
 ## Boundaries
 
